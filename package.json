@@ -1,0 +1,47 @@
+{
+  "name": "deepsolvelegal",
+  "version": "0.1.0",
+  "description": "DeepSolve Legal — an action-first legal AI desktop app powered by the Anthropic API.",
+  "main": "./out/main/index.js",
+  "author": "DeepSolve",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "package:win": "electron-vite build && electron-packager . \"DeepSolve Legal\" --platform=win32 --arch=arm64 --out=app-build --overwrite --prune=true",
+    "dist:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-dist.ps1",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.1",
+    "docx": "^9.5.1",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.9.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.0.0",
+    "lucide-react": "^0.475.0",
+    "postcss": "^8.5.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.3",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0",
+    "zustand": "^5.0.3"
+  }
+}
