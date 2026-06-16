@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useStore } from '../state/store'
+import { useStore, deriveDocAndChat } from '../state/store'
 import ToolChip from './ToolChip'
 import PromptCost from './PromptCost'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Send, Square, Sparkles } from 'lucide-react'
 
 export default function ActivityRail(): JSX.Element {
@@ -9,9 +11,11 @@ export default function ActivityRail(): JSX.Element {
   const [text, setText] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Merge user messages + tool activities into one timeline.
+  // The chat panel shows the conversation (user messages + assistant replies);
+  // the document itself lives in the main pane (see deriveDocAndChat).
+  const { chat } = deriveDocAndChat(messages)
   const timeline = [
-    ...messages.filter((m) => m.role === 'user').map((m) => ({ kind: 'user' as const, t: m.createdAt, m })),
+    ...chat.map((m) => ({ kind: 'msg' as const, t: m.createdAt, m })),
     ...activities.map((a) => ({ kind: 'tool' as const, t: a.startedAt, a }))
   ].sort((x, y) => x.t - y.t)
 
@@ -42,9 +46,16 @@ export default function ActivityRail(): JSX.Element {
         {timeline.map((item) =>
           item.kind === 'tool' ? (
             <ToolChip key={item.a.id} activity={item.a} />
-          ) : (
+          ) : item.m.role === 'user' ? (
             <div key={item.m.id} className="ml-6 rounded-lg bg-accent/10 border border-accent/20 px-3 py-2 text-[12.5px] text-slate-200">
               {item.m.text}
+            </div>
+          ) : (
+            <div
+              key={item.m.id}
+              className="mr-6 rounded-lg bg-ink-800/60 border border-ink-700/70 px-3 py-2 text-[12.5px] text-slate-300 prose-chat"
+            >
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.m.text || '…'}</ReactMarkdown>
             </div>
           )
         )}

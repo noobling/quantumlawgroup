@@ -33,6 +33,36 @@ export function providerReady(settings: Settings | null, keyPresent: boolean): b
   return settings.provider === 'ollama' ? !!settings.ollamaModel : keyPresent
 }
 
+const REDLINE_RE = /<(ins|del)>/i
+
+/**
+ * Split the thread into the persistent document (the work product shown in the
+ * main pane) and the chat conversation (shown in the side panel). An assistant
+ * turn belongs to the document if it is the first one (the original draft) or it
+ * contains redline markup (a revision); every other turn is a chat reply. This
+ * keeps follow-up answers from overwriting the document.
+ */
+export function deriveDocAndChat(messages: ThreadMessage[]): {
+  documentText: string
+  documentId: string | null
+  chat: ThreadMessage[]
+} {
+  const firstAssistantIdx = messages.findIndex((m) => m.role === 'assistant')
+  let documentText = ''
+  let documentId: string | null = null
+  const chat: ThreadMessage[] = []
+  messages.forEach((m, i) => {
+    const isDocument = m.role === 'assistant' && (i === firstAssistantIdx || REDLINE_RE.test(m.text))
+    if (isDocument) {
+      documentText = m.text
+      documentId = m.id
+    } else {
+      chat.push(m)
+    }
+  })
+  return { documentText, documentId, chat }
+}
+
 interface IndexProgress {
   phase: string
   done: number

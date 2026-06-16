@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useStore } from '../state/store'
+import { useStore, deriveDocAndChat } from '../state/store'
 import { workflowById } from '@shared/workflows'
 import Deliverable from '../components/Deliverable'
 import ActivityRail from '../components/ActivityRail'
@@ -13,15 +13,13 @@ export default function Workspace(): JSX.Element {
   const matter = matters.find((m) => m.id === currentMatterId)
   const workflow = matter ? workflowById(matter.workflowId) : undefined
 
-  const lastAssistant = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'assistant') return messages[i]
-    return undefined
-  }, [messages])
+  // The document pane shows the work product; chat replies stay in the side panel.
+  const { documentText, documentId } = useMemo(() => deriveDocAndChat(messages), [messages])
 
   const doExport = async (format: 'docx' | 'pdf' | 'xlsx'): Promise<void> => {
-    if (!currentMatterId || !lastAssistant) return
+    if (!currentMatterId || !documentId) return
     setExporting(format)
-    const res = await window.api.export({ matterId: currentMatterId, messageId: lastAssistant.id, format })
+    const res = await window.api.export({ matterId: currentMatterId, messageId: documentId, format })
     setExporting('')
     setToast(res.ok ? `Exported to ${res.path}` : `Export failed: ${res.error}`)
   }
@@ -44,10 +42,10 @@ export default function Workspace(): JSX.Element {
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
-          <ExportBtn label="Word" icon={<FileText className="w-4 h-4" />} busy={exporting === 'docx'} disabled={!lastAssistant?.text} onClick={() => void doExport('docx')} />
-          <ExportBtn label="PDF" icon={<FileType className="w-4 h-4" />} busy={exporting === 'pdf'} disabled={!lastAssistant?.text} onClick={() => void doExport('pdf')} />
+          <ExportBtn label="Word" icon={<FileText className="w-4 h-4" />} busy={exporting === 'docx'} disabled={!documentText} onClick={() => void doExport('docx')} />
+          <ExportBtn label="PDF" icon={<FileType className="w-4 h-4" />} busy={exporting === 'pdf'} disabled={!documentText} onClick={() => void doExport('pdf')} />
           {isTable && (
-            <ExportBtn label="Excel" icon={<FileSpreadsheet className="w-4 h-4" />} busy={exporting === 'xlsx'} disabled={!lastAssistant?.text} onClick={() => void doExport('xlsx')} />
+            <ExportBtn label="Excel" icon={<FileSpreadsheet className="w-4 h-4" />} busy={exporting === 'xlsx'} disabled={!documentText} onClick={() => void doExport('xlsx')} />
           )}
         </div>
       </header>
@@ -57,7 +55,7 @@ export default function Workspace(): JSX.Element {
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0">
           <Deliverable
-            text={lastAssistant?.text ?? ''}
+            text={documentText}
             running={running}
             emptyHint={workflow?.runningLabel ?? 'Working…'}
           />

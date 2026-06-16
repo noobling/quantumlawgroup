@@ -42,6 +42,26 @@ body {
   font-family: 'Source Serif 4', Georgia, serif;
   line-height: 1.7;
 }
+/* Compact Markdown for assistant chat bubbles in the side panel. */
+.prose-chat {
+  line-height: 1.5;
+}
+.prose-chat p {
+  margin: 0.25rem 0;
+}
+.prose-chat p:first-child {
+  margin-top: 0;
+}
+.prose-chat p:last-child {
+  margin-bottom: 0;
+}
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.25rem 0 0.25rem 1.1rem;
+}
+.prose-chat strong {
+  color: #e8e8ea;
+}
 .prose-legal h1 {
   font-size: 1.6rem;
   font-weight: 700;

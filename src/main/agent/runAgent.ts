@@ -284,20 +284,30 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
       try {
         const source = await gatherSourceText(ctx.filesDir)
         if (source) {
-          const deliverable = assembled // the model's output, before our appended checks
-          const append = (delta: string): void => {
-            assembled += delta
-            emit({ type: 'text', matterId, messageId, delta })
+          // Footers belong on the document, not on chat replies. A turn is part
+          // of the document if it's the first assistant turn (the original draft)
+          // or it contains redlines (a revision) — matching deriveDocAndChat.
+          const prior = (await getMatter(matterId))?.messages ?? []
+          const isFirstAssistant = !prior.some(
+            (m) => m.role === 'assistant' && m.id !== messageId && m.text.trim()
+          )
+          const isDocumentTurn = isFirstAssistant || /<(ins|del)>/i.test(assembled)
+          if (isDocumentTurn) {
+            const deliverable = assembled // the model's output, before appended checks
+            const append = (delta: string): void => {
+              assembled += delta
+              emit({ type: 'text', matterId, messageId, delta })
+            }
+            // Lint the source once on the original draft (redundant on revisions);
+            // don't rely on a weak model to call lint_document itself.
+            if (isFirstAssistant && workflow.tools.includes('lint_document')) {
+              const lf = lintFooter(lintDocument(source))
+              if (lf) append(lf)
+            }
+            // Verify citations in the model's deliverable only — not our footers.
+            const cf = citationFooter(verifyCitations(deliverable, source))
+            if (cf) append(cf)
           }
-          // Run the deterministic linter automatically (don't rely on a weak
-          // model to call lint_document) for workflows that opt into it.
-          if (workflow.tools.includes('lint_document')) {
-            const lf = lintFooter(lintDocument(source))
-            if (lf) append(lf)
-          }
-          // Verify citations in the model's deliverable only — not our footers.
-          const cf = citationFooter(verifyCitations(deliverable, source))
-          if (cf) append(cf)
         }
       } catch {
         /* checks are best-effort; never block the deliverable */
