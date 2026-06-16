@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { workflowById } from '@shared/workflows'
+import { estimateTokens } from '@shared/pricing'
 import { useStore, providerReady } from '../state/store'
+import CostLine, { SYSTEM_OVERHEAD } from './CostLine'
 import Icon from './Icon'
 import { X, Paperclip, FileText, Play } from 'lucide-react'
 
@@ -11,7 +13,21 @@ export default function IntakePanel({ workflowId }: { workflowId: string }): JSX
   const isLocal = settings?.provider === 'ollama'
   const [values, setValues] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<string[]>([])
+  const [fileTokens, setFileTokens] = useState(0)
   const [error, setError] = useState('')
+
+  // Estimate the token cost of the attached documents (extracted in the main process).
+  useEffect(() => {
+    if (files.length === 0) {
+      setFileTokens(0)
+      return
+    }
+    let cancelled = false
+    void window.api.files.estimateTokens(files).then((t) => !cancelled && setFileTokens(t))
+    return () => {
+      cancelled = true
+    }
+  }, [files])
 
   if (!workflow) return null
 
@@ -131,6 +147,10 @@ export default function IntakePanel({ workflowId }: { workflowId: string }): JSX
               {field.help && <p className="text-[11.5px] text-ink-600 mt-1">{field.help}</p>}
             </div>
           ))}
+        </div>
+
+        <div className="px-6 pt-2">
+          <CostLine tokens={SYSTEM_OVERHEAD + estimateTokens(Object.values(values).join(' ')) + fileTokens} />
         </div>
 
         <div className="px-6 py-4 border-t border-ink-700/60 flex items-center gap-3">

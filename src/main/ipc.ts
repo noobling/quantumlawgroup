@@ -36,6 +36,8 @@ import {
 } from './library/store'
 import { buildIndex, cancelIndex } from './library/indexer'
 import { searchCollection } from './library/search'
+import { extractText } from './library/extract'
+import { estimateTokens } from '@shared/pricing'
 
 function sanitize(name: string): string {
   return name.replace(/[<>:"/\\|?*]+/g, '-').slice(0, 80)
@@ -126,6 +128,18 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
   ipcMain.handle('files:reveal', (_e, p: string) => {
     shell.showItemInFolder(p)
+  })
+  // Estimate the prompt-token cost of attaching these documents (extract text, ~4 chars/token).
+  ipcMain.handle('files:estimateTokens', async (_e, paths: string[]): Promise<number> => {
+    let tokens = 0
+    for (const p of paths ?? []) {
+      try {
+        tokens += estimateTokens((await extractText(p)).text)
+      } catch {
+        /* unreadable file — skip */
+      }
+    }
+    return tokens
   })
 
   // Export deliverable

@@ -45,7 +45,8 @@ const api: Api = {
   },
   files: {
     pick: () => ipcRenderer.invoke('files:pick'),
-    reveal: (p: string) => ipcRenderer.invoke('files:reveal', p)
+    reveal: (p: string) => ipcRenderer.invoke('files:reveal', p),
+    estimateTokens: (paths: string[]) => ipcRenderer.invoke('files:estimateTokens', paths)
   },
   library: {
     list: () => ipcRenderer.invoke('library:list'),

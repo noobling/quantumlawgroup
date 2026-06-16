@@ -357,6 +357,7 @@ export interface Api {
   files: {
     pick: () => Promise<string[]>
     reveal: (path: string) => Promise<void>
+    estimateTokens: (paths: string[]) => Promise<number>
   }
   library: {
     list: () => Promise<Collection[]>

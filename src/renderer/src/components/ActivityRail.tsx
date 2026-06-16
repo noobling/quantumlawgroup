@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
 import ToolChip from './ToolChip'
+import PromptCost from './PromptCost'
 import { Send, Square, Sparkles } from 'lucide-react'
 
 export default function ActivityRail(): JSX.Element {
@@ -82,6 +83,7 @@ export default function ActivityRail(): JSX.Element {
             </button>
           )}
         </div>
+        <PromptCost text={text} />
       </div>
     </aside>
   )
