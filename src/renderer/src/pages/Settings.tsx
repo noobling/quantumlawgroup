@@ -17,7 +17,9 @@ import {
   RefreshCw,
   Gauge,
   AlertTriangle,
-  Scale
+  Scale,
+  FileText,
+  PenLine
 } from 'lucide-react'
 
 export default function Settings(): JSX.Element {
@@ -376,6 +378,31 @@ export default function Settings(): JSX.Element {
             >
               <FolderOpen className="w-4 h-4" /> Change
             </button>
+          </div>
+        </section>
+
+        {/* Document editor */}
+        <section className="bg-ink-900/60 border border-ink-700/60 rounded-xl p-6">
+          <h2 className="font-medium mb-1">Document editor</h2>
+          <p className="text-[12.5px] text-ink-600 mb-3">
+            Which embedded editor renders redlined contracts. Both show the AI’s changes as tracked
+            suggestions; you can also open any redline in Microsoft Word from the workspace.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <ProviderCard
+              active={settings.documentEditor === 'superdoc'}
+              onClick={() => void saveSettings({ documentEditor: 'superdoc' })}
+              icon={<FileText className="w-4 h-4" />}
+              title="SuperDoc"
+              sub="Renders native Word docx with tracked changes. Best fidelity to the exported file."
+            />
+            <ProviderCard
+              active={settings.documentEditor === 'syncfusion'}
+              onClick={() => void saveSettings({ documentEditor: 'syncfusion' })}
+              icon={<PenLine className="w-4 h-4" />}
+              title="Syncfusion"
+              sub="Word-grade editor with a familiar ribbon. Renders entirely client-side."
+            />
           </div>
         </section>
 

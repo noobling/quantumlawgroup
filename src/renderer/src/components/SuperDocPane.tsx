@@ -39,6 +39,7 @@ export default function SuperDocPane({ docxBase64, running }: { docxBase64: stri
         documentMode="suggesting"
         fonts={superdocFonts}
         telemetry={{ enabled: false }}
+        zoom={{ mode: 'fit-width' }}
       />
     </div>
   )

@@ -11,6 +11,14 @@ declare global {
     interface IntrinsicElements extends React.JSX.IntrinsicElements {}
     interface IntrinsicAttributes extends React.JSX.IntrinsicAttributes {}
   }
+
+  // Vite env vars exposed to the renderer (electron-vite injects these at build).
+  interface ImportMetaEnv {
+    readonly VITE_SYNCFUSION_LICENSE?: string
+  }
+  interface ImportMeta {
+    readonly env: ImportMetaEnv
+  }
 }
 
 export {}

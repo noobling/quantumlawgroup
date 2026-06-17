@@ -113,6 +113,28 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return (await markdownToTrackedDocx(text)).toString('base64')
   })
 
+  // Write the document as a tracked-changes .docx and open it in the OS's default
+  // editor (Microsoft Word on Windows) for high-fidelity editing.
+  ipcMain.handle('matters:openInWord', async (_e, id: string): Promise<ExportResult> => {
+    try {
+      const matter = await getMatter(id)
+      if (!matter) return { ok: false, error: 'Matter not found.' }
+      const text = matter.document?.trim()
+        ? matter.document
+        : [...matter.messages].reverse().find((m) => m.role === 'assistant' && m.text.trim())?.text
+      if (!text) return { ok: false, error: 'Nothing to open yet.' }
+      const settings = await getSettings()
+      await fs.mkdir(settings.matterRoot, { recursive: true })
+      const outPath = path.join(settings.matterRoot, `${sanitize(matter.title)}.docx`)
+      await fs.writeFile(outPath, await markdownToTrackedDocx(text, matter.title))
+      const err = await shell.openPath(outPath)
+      if (err) return { ok: false, error: err }
+      return { ok: true, path: outPath }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
   // Agent
   ipcMain.handle('agent:start', (_e, input: StartThreadInput) => startThread(input, emit))
   ipcMain.handle('agent:send', (_e, input: SendMessageInput) => sendMessage(input, emit))

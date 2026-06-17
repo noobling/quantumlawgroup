@@ -6,6 +6,27 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Send, Square, Sparkles } from 'lucide-react'
 
+/**
+ * Strip redline *bodies* from chat prose — the actual clause text lives in the
+ * document, so the chat should read as a terse summary. Removes code-fenced
+ * clauses, <ins>/<del> tracked-change spans, <br>, and the now-orphaned
+ * "Redline:" labels and separator lines they leave behind.
+ */
+function cleanChat(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/<del>[\s\S]*?<\/del>/gi, '')
+    .replace(/<ins>[\s\S]*?<\/ins>/gi, '')
+    .replace(/<\/?(?:ins|del)>/gi, '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    // Remove "Redline:" / "Suggested redline:" lines — the label AND the proposed
+    // clause text after it (the redline body belongs in the document, not chat).
+    .replace(/^[ \t]*[-*>]?[ \t]*\*{0,2}\s*(?:suggested\s+)?redline\*{0,2}\s*:.*$/gim, '')
+    .replace(/^\s*\.{3,}\s*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export default function ActivityRail(): JSX.Element {
   const { messages, documentText, activities, running, sendFollow, cancelRun } = useStore()
   const [text, setText] = useState('')
@@ -55,7 +76,7 @@ export default function ActivityRail(): JSX.Element {
               key={item.m.id}
               className="mr-6 rounded-lg bg-ink-800/60 border border-ink-700/70 px-3 py-2 text-[12.5px] text-slate-300 prose-chat"
             >
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.m.text || '…'}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleanChat(item.m.text) || '…'}</ReactMarkdown>
             </div>
           )
         )}

@@ -159,6 +159,9 @@ export function localModelInfo(name: string): LocalModelInfo | null {
 
 export type LlmProvider = 'anthropic' | 'ollama'
 
+/** Which in-app editor renders the redlined document pane. */
+export type DocumentEditor = 'superdoc' | 'syncfusion'
+
 export interface Settings {
   /** Which LLM backend to use. */
   provider: LlmProvider
@@ -173,6 +176,8 @@ export interface Settings {
   profile: string
   /** Auto-approve read-only tools (always true; reads never prompt). */
   autoApproveReads: boolean
+  /** Which embedded editor backs the redline document pane. */
+  documentEditor: DocumentEditor
 }
 
 export interface KeyStatus {
@@ -350,6 +355,7 @@ export interface Api {
     get: (id: string) => Promise<MatterDetail | null>
     delete: (id: string) => Promise<void>
     documentDocx: (id: string) => Promise<string>
+    openInWord: (id: string) => Promise<ExportResult>
   }
   agent: {
     start: (input: StartThreadInput) => Promise<{ matterId: string }>

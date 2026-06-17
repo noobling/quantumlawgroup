@@ -22,7 +22,8 @@ function defaultSettings(): Settings {
     ollamaModel: '',
     matterRoot: path.join(app.getPath('documents'), 'DeepSolve Legal'),
     profile: '',
-    autoApproveReads: true
+    autoApproveReads: true,
+    documentEditor: 'superdoc'
   }
 }
 

@@ -19,6 +19,7 @@
     "@hocuspocus/provider": "^2.15.3",
     "@superdoc-dev/fonts": "^0.1.1",
     "@superdoc-dev/react": "^1.12.0",
+    "@syncfusion/ej2-react-documenteditor": "^33.2.13",
     "docx": "^9.5.1",
     "exceljs": "^4.4.0",
     "mammoth": "^1.9.0",

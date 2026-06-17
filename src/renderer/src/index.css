@@ -45,6 +45,15 @@ body {
   background-clip: content-box;
 }
 
+/* SuperDoc's toolbar is a fixed flex row that overflows (and clips) in our
+   narrow document pane. Let it wrap to a second row instead of cutting off the
+   right-hand controls. !important beats SuperDoc's Vue-scoped rules. */
+.superdoc-toolbar {
+  flex-wrap: wrap !important;
+  justify-content: flex-start !important;
+  row-gap: 2px;
+}
+
 /* Cream "paper" document panes (deliverable / SuperDoc) — light-friendly thumb. */
 .bg-paper {
   scrollbar-color: #d4cdb9 transparent;

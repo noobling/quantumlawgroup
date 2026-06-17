@@ -30,7 +30,8 @@ const api: Api = {
     list: () => ipcRenderer.invoke('matters:list'),
     get: (id: string) => ipcRenderer.invoke('matters:get', id),
     delete: (id: string) => ipcRenderer.invoke('matters:delete', id),
-    documentDocx: (id: string) => ipcRenderer.invoke('matters:documentDocx', id)
+    documentDocx: (id: string) => ipcRenderer.invoke('matters:documentDocx', id),
+    openInWord: (id: string) => ipcRenderer.invoke('matters:openInWord', id)
   },
   agent: {
     start: (input: StartThreadInput) => ipcRenderer.invoke('agent:start', input),

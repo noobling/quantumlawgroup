@@ -7,6 +7,7 @@ import Settings from './pages/Settings'
 import Library from './pages/Library'
 import Collection from './pages/Collection'
 import SuperDocSpike from './pages/SuperDocSpike'
+import SyncfusionSpike from './pages/SyncfusionSpike'
 import IntakePanel from './components/IntakePanel'
 import PermissionModal from './components/PermissionModal'
 import Toast from './components/Toast'
@@ -36,6 +37,7 @@ export default function App(): JSX.Element {
         {route === 'library' && <Library />}
         {route === 'collection' && <Collection />}
         {route === 'superdoc-spike' && <SuperDocSpike />}
+        {route === 'syncfusion-spike' && <SyncfusionSpike />}
       </main>
       {intakeWorkflowId && <IntakePanel workflowId={intakeWorkflowId} />}
       <PermissionModal />
