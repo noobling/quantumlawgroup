@@ -80,13 +80,26 @@ export default function Highlights(): JSX.Element {
                 </div>
                 <ul className="space-y-1.5">
                   {(d.highlights ?? []).map((h, i) => (
-                    <li key={i} className="flex gap-3 items-start rounded-lg bg-ink-900/50 border border-ink-700/50 px-3 py-2.5">
-                      <span
-                        className="mt-1 w-1.5 h-5 rounded-sm shrink-0"
-                        style={{ backgroundColor: swatch(h.color) }}
-                        title={h.color}
-                      />
-                      <span className="text-[13px] text-slate-200 leading-relaxed">{h.text}</span>
+                    <li key={i} className="rounded-lg bg-ink-900/50 border border-ink-700/50 px-3 py-2.5">
+                      <div className="flex gap-3 items-start">
+                        <span
+                          className="mt-1 w-1.5 h-5 rounded-sm shrink-0"
+                          style={{ backgroundColor: swatch(h.color) }}
+                          title={h.color}
+                        />
+                        <span className="flex-1 text-[13px] text-slate-200 leading-relaxed">{h.text}</span>
+                        {h.page != null && (
+                          <span
+                            className="shrink-0 mt-0.5 text-[11px] font-medium text-ink-600 border border-ink-700/70 rounded px-1.5 py-0.5"
+                            title={d.ext === '.pdf' ? 'Page in the PDF' : 'Approximate page (from the document’s page breaks)'}
+                          >
+                            Page {h.page}
+                          </span>
+                        )}
+                      </div>
+                      {h.context && h.context.trim() !== h.text.trim() && (
+                        <div className="mt-1.5 ml-[18px] text-[11.5px] text-ink-600 italic line-clamp-2">{h.context}</div>
+                      )}
                     </li>
                   ))}
                 </ul>

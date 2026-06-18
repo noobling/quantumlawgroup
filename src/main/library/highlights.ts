@@ -16,6 +16,8 @@ export interface HighlightPassage {
   color: string
   /** The full paragraph the highlight sits in — helps locate the clause. */
   context: string
+  /** 1-based page: exact for PDF; approximate for .docx (from page breaks). */
+  page?: number
 }
 
 type XmlNode = {
@@ -83,22 +85,31 @@ export async function extractDocxHighlights(filePath: string): Promise<Highlight
   const dom = new DOMParser().parseFromString(xml, 'text/xml') as unknown as XmlNode
 
   const passages: HighlightPassage[] = []
+  // Approximate page number: Word writes <w:lastRenderedPageBreak/> where pages
+  // broke when it last saved; manual breaks are <w:br w:type="page"/>. Count them
+  // in document order. (Docs never opened by Word lack these → all page 1.)
+  let page = 1
 
   // getElementsByTagName returns document order, including paragraphs in tables.
   for (const para of tagged(dom, 'w:p')) {
     const context = textOf(para).replace(/\s+/g, ' ').trim()
     let buffer = ''
     let color = ''
+    let startPage = page
     const flush = (): void => {
       const text = buffer.replace(/\s+/g, ' ').trim()
-      if (text) passages.push({ text, color, context })
+      if (text) passages.push({ text, color, context, page: startPage })
       buffer = ''
       color = ''
     }
     for (const run of tagged(para, 'w:r')) {
+      // Advance the page counter past any breaks inside this run.
+      page += tagged(run, 'w:lastRenderedPageBreak').length
+      for (const br of tagged(run, 'w:br')) if (br.getAttribute?.('w:type') === 'page') page += 1
       const hl = runHighlight(run)
       if (hl) {
         if (color && hl !== color) flush() // colour changed → new passage
+        if (!buffer) startPage = page // page where this passage begins
         color = hl
         buffer += textOf(run)
       } else if (buffer) {
@@ -219,7 +230,7 @@ export async function extractPdfHighlights(filePath: string): Promise<HighlightP
       const bandY0 = Math.min(...quads.map((q) => q.y0))
       const bandY1 = Math.max(...quads.map((q) => q.y1))
       const context = orderText(items.filter((it) => it.y1 > bandY0 - 2 && it.y0 < bandY1 + 2))
-      out.push({ text, color: colorName(a.color), context })
+      out.push({ text, color: colorName(a.color), context, page: p })
     }
   }
 

@@ -298,6 +298,10 @@ export interface DocHighlight {
   text: string
   /** Highlight colour: a Word colour name (e.g. "yellow") or a "#RRGGBB" fill. */
   color: string
+  /** 1-based page where it's highlighted — so it's easy to find in the source. */
+  page?: number
+  /** The surrounding paragraph/line, to locate the highlight on the page. */
+  context?: string
 }
 
 export interface IndexedDoc {
