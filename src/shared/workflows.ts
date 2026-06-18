@@ -157,7 +157,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Assemble a dated, sourced chronology of events from documents and notes.',
     icon: 'ListOrdered',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'convert_emails_to_pdf', 'list_dir', 'write_xlsx'],
     intakeFields: [
       { key: 'files', label: 'Source documents', type: 'files', required: true, help: `Emails, contracts, notes (${SUPPORTED_DOCS}).` },
       { key: 'context', label: 'Matter context (optional)', type: 'textarea', placeholder: 'What is this dispute about?' }
@@ -395,7 +395,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Assess documents or log entries for privilege and produce a defensible log.',
     icon: 'ShieldAlert',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'read_xlsx', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'convert_emails_to_pdf', 'read_xlsx', 'write_xlsx'],
     intakeFields: [
       { key: 'files', label: 'Documents or existing log', type: 'files', required: true, help: `Attach the documents or a draft log (${SUPPORTED_DOCS}).` }
     ],
@@ -464,7 +464,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Pull a ranked issues list out of diligence documents for the deal team.',
     icon: 'ListFilter',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'list_dir', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'convert_emails_to_pdf', 'list_dir', 'write_docx'],
     intakeFields: [
       { key: 'files', label: 'Diligence documents', type: 'files', required: true, help: `Attach the data-room documents (${SUPPORTED_DOCS}).` },
       { key: 'deal_context', label: 'Deal context (optional)', type: 'text', placeholder: 'Type of deal, what matters most.' }

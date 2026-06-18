@@ -1,7 +1,7 @@
 import type { ToolDef } from './types'
 import type { ToolSpec } from '../agent/provider'
 import { listDir, readFile, searchFiles, writeFile } from './filesystem'
-import { readPdf, readDocx, readXlsx, writeDocx, writeXlsx, extractHighlights } from './office'
+import { readPdf, readDocx, readXlsx, writeDocx, writeXlsx, extractHighlights, convertEmailsToPdfTool } from './office'
 import { fetchUrl } from './web'
 import { runCommand } from './shell'
 import { searchLibraryTool } from './library'
@@ -19,6 +19,7 @@ export const LOCAL_TOOLS: Record<string, ToolDef> = {
   read_docx: readDocx,
   read_xlsx: readXlsx,
   extract_highlights: extractHighlights,
+  convert_emails_to_pdf: convertEmailsToPdfTool,
   write_docx: writeDocx,
   write_xlsx: writeXlsx,
   fetch_url: fetchUrl,
