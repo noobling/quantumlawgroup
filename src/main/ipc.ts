@@ -64,6 +64,24 @@ function indexTable(docs: IndexedDoc[]): { header: string[]; rows: string[][]; m
   return { header, rows, markdown }
 }
 
+/** Flatten reviewer highlights across a collection into export rows. */
+function highlightTable(docs: IndexedDoc[]): { header: string[]; rows: string[][] } {
+  const header = ['Document', 'Page', 'Colour', 'Highlight', 'Context']
+  const rows: string[][] = []
+  for (const d of docs) {
+    for (const h of d.highlights || []) {
+      rows.push([d.name, h.page != null ? String(h.page) : '', h.color, h.text, h.context || ''])
+    }
+  }
+  return { header, rows }
+}
+
+/** Minimal RFC-4180 CSV serialiser. */
+function toCsv(rows: string[][]): string {
+  const cell = (c: string): string => (/[",\r\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)
+  return rows.map((r) => r.map(cell).join(',')).join('\r\n')
+}
+
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
   const emit = (e: AgentEvent): void => {
     getWindow()?.webContents.send('agent:event', e)
@@ -259,6 +277,33 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
         ext = 'docx'
       } else {
         buf = await rowsToXlsx([header, ...rows], detail.name.slice(0, 28))
+        ext = 'xlsx'
+      }
+      const outPath = path.join(settings.matterRoot, `${base}.${ext}`)
+      await fs.writeFile(outPath, buf)
+      shell.showItemInFolder(outPath)
+      return { ok: true, path: outPath }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  ipcMain.handle('library:exportHighlights', async (_e, id: string, format: 'csv' | 'xlsx'): Promise<ExportResult> => {
+    try {
+      const detail = await getCollectionDetail(id)
+      if (!detail) return { ok: false, error: 'Collection not found.' }
+      const { header, rows } = highlightTable(detail.docs)
+      if (rows.length === 0) return { ok: false, error: 'No highlights to export.' }
+      const settings = await getSettings()
+      await fs.mkdir(settings.matterRoot, { recursive: true })
+      const base = sanitize('Highlights - ' + detail.name)
+      let buf: Buffer
+      let ext: string
+      if (format === 'csv') {
+        buf = Buffer.from('﻿' + toCsv([header, ...rows]), 'utf8') // BOM so Excel reads UTF-8
+        ext = 'csv'
+      } else {
+        buf = await rowsToXlsx([header, ...rows], 'Highlights')
         ext = 'xlsx'
       }
       const outPath = path.join(settings.matterRoot, `${base}.${ext}`)

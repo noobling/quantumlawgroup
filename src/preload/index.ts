@@ -59,6 +59,8 @@ const api: Api = {
     cancel: (id: string) => ipcRenderer.invoke('library:cancel', id),
     search: (id: string, query: string) => ipcRenderer.invoke('library:search', id, query),
     exportIndex: (id: string, format: 'xlsx' | 'docx') => ipcRenderer.invoke('library:export', id, format),
+    exportHighlights: (id: string, format: 'csv' | 'xlsx') =>
+      ipcRenderer.invoke('library:exportHighlights', id, format),
     pickFolders: () => ipcRenderer.invoke('library:pickFolders'),
     onEvent: (cb: (e: IndexEvent) => void) => {
       const listener = (_e: unknown, payload: IndexEvent): void => cb(payload)

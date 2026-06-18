@@ -120,6 +120,7 @@ interface AppState {
   searchCollection: (query: string) => Promise<void>
   clearSearch: () => void
   exportIndex: (format: 'xlsx' | 'docx') => Promise<void>
+  exportHighlights: (format: 'csv' | 'xlsx') => Promise<void>
   handleIndexEvent: (e: IndexEvent) => void
 
   openIntake: (workflowId: string) => void
@@ -310,6 +311,12 @@ export const useStore = create<AppState>((set, get) => ({
     const id = get().currentCollectionId
     if (!id) return
     const res = await window.api.library.exportIndex(id, format)
+    set({ toast: res.ok ? `Exported to ${res.path}` : `Export failed: ${res.error}` })
+  },
+  async exportHighlights(format) {
+    const id = get().currentCollectionId
+    if (!id) return
+    const res = await window.api.library.exportHighlights(id, format)
     set({ toast: res.ok ? `Exported to ${res.path}` : `Export failed: ${res.error}` })
   },
   handleIndexEvent(e) {

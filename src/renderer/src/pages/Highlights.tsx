@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useStore } from '../state/store'
-import { ArrowLeft, Highlighter, ExternalLink, Loader2 } from 'lucide-react'
+import type { IndexedDoc, DocHighlight } from '@shared/types'
+import { ArrowLeft, Highlighter, ExternalLink, Loader2, FileSpreadsheet, Download } from 'lucide-react'
 
 // CSS colours for the common Word highlight names; "#RRGGBB" fills pass through.
 const SWATCH: Record<string, string> = {
@@ -18,17 +19,26 @@ function swatch(color: string): string {
   return color.startsWith('#') ? color : SWATCH[color] ?? '#facc15'
 }
 
+interface Row {
+  doc: IndexedDoc
+  h: DocHighlight
+}
+
 /**
- * A dedicated page listing just the reviewer highlights across the collection's
- * documents — the highlighted text, its colour, and which document it's from —
- * separate from the index table.
+ * A dedicated table of every reviewer highlight in the collection — document,
+ * page, colour, highlighted text, and surrounding context — separate from the
+ * index. Exportable to CSV or Excel.
  */
 export default function Highlights(): JSX.Element {
-  const { collectionDetail: c, setRoute } = useStore()
+  const { collectionDetail: c, setRoute, exportHighlights } = useStore()
 
-  // Only documents that actually have highlights, in index order.
-  const docs = useMemo(() => (c?.docs ?? []).filter((d) => d.highlights && d.highlights.length > 0), [c])
-  const total = useMemo(() => docs.reduce((n, d) => n + (d.highlights?.length ?? 0), 0), [docs])
+  const rows: Row[] = useMemo(() => {
+    const out: Row[] = []
+    for (const d of c?.docs ?? []) for (const h of d.highlights ?? []) out.push({ doc: d, h })
+    return out
+  }, [c])
+
+  const docCount = useMemo(() => new Set(rows.map((r) => r.doc.id)).size, [rows])
 
   if (!c) {
     return (
@@ -48,13 +58,29 @@ export default function Highlights(): JSX.Element {
         <div className="min-w-0">
           <div className="text-[14px] font-medium text-slate-100 truncate">Highlights — {c.name}</div>
           <div className="text-[11px] text-ink-600">
-            {total} highlight{total === 1 ? '' : 's'} across {docs.length} document{docs.length === 1 ? '' : 's'}
+            {rows.length} highlight{rows.length === 1 ? '' : 's'} across {docCount} document{docCount === 1 ? '' : 's'}
           </div>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => void exportHighlights('csv')}
+            disabled={rows.length === 0}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-40"
+          >
+            <Download className="w-4 h-4" /> CSV
+          </button>
+          <button
+            onClick={() => void exportHighlights('xlsx')}
+            disabled={rows.length === 0}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-40"
+          >
+            <FileSpreadsheet className="w-4 h-4" /> Excel
+          </button>
         </div>
       </header>
 
       <div className="flex-1 min-h-0 overflow-auto">
-        {docs.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="h-full grid place-items-center text-ink-600">
             <div className="flex flex-col items-center gap-2">
               <Highlighter className="w-7 h-7 opacity-40" />
@@ -62,50 +88,52 @@ export default function Highlights(): JSX.Element {
             </div>
           </div>
         ) : (
-          <div className="max-w-3xl mx-auto px-6 py-6 space-y-7">
-            {docs.map((d) => (
-              <section key={d.id}>
-                <div className="flex items-center gap-2 mb-2">
-                  <h2 className="text-[13px] font-medium text-slate-200 truncate">{d.name}</h2>
-                  <span className="text-[11px] text-ink-600">
-                    {d.highlights?.length} highlight{(d.highlights?.length ?? 0) === 1 ? '' : 's'}
-                  </span>
-                  <button
-                    onClick={() => void window.api.files.reveal(d.path)}
-                    title="Reveal in Finder"
-                    className="ml-auto text-ink-600 hover:text-accent"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <ul className="space-y-1.5">
-                  {(d.highlights ?? []).map((h, i) => (
-                    <li key={i} className="rounded-lg bg-ink-900/50 border border-ink-700/50 px-3 py-2.5">
-                      <div className="flex gap-3 items-start">
-                        <span
-                          className="mt-1 w-1.5 h-5 rounded-sm shrink-0"
-                          style={{ backgroundColor: swatch(h.color) }}
-                          title={h.color}
-                        />
-                        <span className="flex-1 text-[13px] text-slate-200 leading-relaxed">{h.text}</span>
-                        {h.page != null && (
-                          <span
-                            className="shrink-0 mt-0.5 text-[11px] font-medium text-ink-600 border border-ink-700/70 rounded px-1.5 py-0.5"
-                            title={d.ext === '.pdf' ? 'Page in the PDF' : 'Approximate page (from the document’s page breaks)'}
-                          >
-                            Page {h.page}
-                          </span>
-                        )}
-                      </div>
-                      {h.context && h.context.trim() !== h.text.trim() && (
-                        <div className="mt-1.5 ml-[18px] text-[11.5px] text-ink-600 italic line-clamp-2">{h.context}</div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
+          <table className="w-full text-[12.5px] border-collapse">
+            <thead className="sticky top-0 bg-ink-900 z-10">
+              <tr className="text-left text-ink-600 border-b border-ink-700">
+                <th className="px-3 py-2 font-medium">Document</th>
+                <th className="px-3 py-2 font-medium w-16">Page</th>
+                <th className="px-3 py-2 font-medium w-28">Colour</th>
+                <th className="px-3 py-2 font-medium">Highlight</th>
+                <th className="px-3 py-2 font-medium">Context</th>
+                <th className="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(({ doc, h }, i) => {
+                const firstOfDoc = i === 0 || rows[i - 1].doc.id !== doc.id
+                return (
+                  <tr key={i} className="border-b border-ink-800/60 hover:bg-ink-800/40 align-top">
+                    <td className="px-3 py-2 text-slate-300">
+                      {firstOfDoc ? <span className="line-clamp-2 max-w-[16rem]">{doc.name}</span> : <span className="text-ink-700">↳</span>}
+                    </td>
+                    <td className="px-3 py-2 text-slate-400 tabular-nums">{h.page ?? ''}</td>
+                    <td className="px-3 py-2">
+                      <span className="inline-flex items-center gap-1.5 text-slate-400">
+                        <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: swatch(h.color) }} />
+                        {h.color}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-slate-200">
+                      <div className="max-w-[20rem]">{h.text}</div>
+                    </td>
+                    <td className="px-3 py-2 text-ink-600">
+                      <div className="line-clamp-2 max-w-[22rem] italic">{h.context}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => void window.api.files.reveal(doc.path)}
+                        title="Reveal in Finder"
+                        className="text-ink-600 hover:text-accent"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         )}
       </div>
     </div>

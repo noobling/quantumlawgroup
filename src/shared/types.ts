@@ -391,6 +391,7 @@ export interface Api {
     cancel: (id: string) => Promise<void>
     search: (id: string, query: string) => Promise<LibrarySearchHit[]>
     exportIndex: (id: string, format: 'xlsx' | 'docx') => Promise<ExportResult>
+    exportHighlights: (id: string, format: 'csv' | 'xlsx') => Promise<ExportResult>
     pickFolders: () => Promise<string[]>
     onEvent: (cb: (e: IndexEvent) => void) => () => void
   }
