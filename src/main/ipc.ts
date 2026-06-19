@@ -5,6 +5,7 @@ import type {
   AgentEvent,
   Collection,
   CreateCollectionInput,
+  EmailToPdfOptions,
   ExportInput,
   ExportResult,
   IndexedDoc,
@@ -295,8 +296,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
   })
-  ipcMain.handle('emailToPdf:convert', (_e, inputDir: string, outputDir: string) =>
-    convertEmailsToPdf(inputDir, outputDir)
+  ipcMain.handle('emailToPdf:convert', (_e, inputDir: string, outputDir: string, options?: EmailToPdfOptions) =>
+    convertEmailsToPdf(inputDir, outputDir, options)
   )
 
   ipcMain.handle('library:exportHighlights', async (_e, id: string, format: 'csv' | 'xlsx'): Promise<ExportResult> => {

@@ -15,6 +15,12 @@ export default function EmailToPdf(): JSX.Element {
   const [output, setOutput] = useState('')
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<EmailToPdfResult | null>(null)
+  // Counsel-review production options.
+  const [combine, setCombine] = useState(true)
+  const [bates, setBates] = useState(true)
+  const [batesPrefix, setBatesPrefix] = useState('DOC-')
+  const [batesStart, setBatesStart] = useState('1')
+  const [index, setIndex] = useState(true)
 
   const pick = async (which: 'in' | 'out'): Promise<void> => {
     const dir = await window.api.emailToPdf.pickFolder()
@@ -29,7 +35,11 @@ export default function EmailToPdf(): JSX.Element {
     setRunning(true)
     setResult(null)
     try {
-      const r = await window.api.emailToPdf.convert(input, output)
+      const r = await window.api.emailToPdf.convert(input, output, {
+        combineAttachments: combine,
+        bates: bates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : null,
+        index
+      })
       setResult(r)
       setToast(`Converted ${r.converted} email${r.converted === 1 ? '' : 's'} to PDF.`)
     } catch (e) {
@@ -66,6 +76,32 @@ export default function EmailToPdf(): JSX.Element {
           </div>
           <FolderRow label="Output folder (PDFs)" path={output} onPick={() => void pick('out')} />
 
+          {/* Counsel-review production options */}
+          <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3.5 space-y-2.5">
+            <div className="text-[11px] uppercase tracking-wider text-ink-600">For counsel review</div>
+            <label className="flex items-start gap-2.5 text-[12.5px] text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={combine} onChange={(e) => setCombine(e.target.checked)} className="mt-0.5 accent-accent" />
+              <span>Combine each email + its attachments into one PDF <span className="text-ink-600">(native files still saved alongside)</span></span>
+            </label>
+            <label className="flex items-start gap-2.5 text-[12.5px] text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={bates} onChange={(e) => setBates(e.target.checked)} className="mt-0.5 accent-accent" />
+              <span>Bates-number every page</span>
+            </label>
+            {bates && (
+              <div className="ml-7 flex items-center gap-2 text-[12px]">
+                <span className="text-ink-600">Prefix</span>
+                <input value={batesPrefix} onChange={(e) => setBatesPrefix(e.target.value)} className="w-24 bg-ink-950 border border-ink-700 rounded px-2 py-1 text-slate-200 outline-none focus:border-accent/60" />
+                <span className="text-ink-600">Start at</span>
+                <input value={batesStart} onChange={(e) => setBatesStart(e.target.value.replace(/[^0-9]/g, ''))} className="w-20 bg-ink-950 border border-ink-700 rounded px-2 py-1 text-slate-200 outline-none focus:border-accent/60" />
+                <span className="text-ink-600">e.g. {batesPrefix}{String(Math.max(1, parseInt(batesStart, 10) || 1)).padStart(6, '0')}</span>
+              </div>
+            )}
+            <label className="flex items-start gap-2.5 text-[12.5px] text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={index} onChange={(e) => setIndex(e.target.checked)} className="mt-0.5 accent-accent" />
+              <span>Generate a production index (Excel) — Bates range, date, from, to, subject, attachments</span>
+            </label>
+          </div>
+
           <button
             onClick={() => void convert()}
             disabled={!input || !output || running}
@@ -88,6 +124,14 @@ export default function EmailToPdf(): JSX.Element {
               {result.skipped} non-email file{result.skipped === 1 ? '' : 's'} skipped
               {result.errors.length > 0 && ` · ${result.errors.length} failed`}
             </div>
+            {result.batesRange && (
+              <div className="mt-1 text-[12.5px] text-slate-300">
+                Bates: <span className="font-mono">{result.batesRange.begin}</span> – <span className="font-mono">{result.batesRange.end}</span>
+              </div>
+            )}
+            {result.indexPath && (
+              <div className="mt-0.5 text-[12.5px] text-ink-600">Production index: {result.indexPath.split('/').pop()}</div>
+            )}
 
             {result.errors.length > 0 && (
               <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 text-[12px] text-amber-200/90">

@@ -276,6 +276,16 @@ export type PermissionDecision = 'allow' | 'allow-always' | 'deny'
 
 // ---- Email → PDF batch conversion ----
 
+/** Counsel-review production options for email → PDF. */
+export interface EmailToPdfOptions {
+  /** Merge each email's attachments (PDFs/images) onto the end of its PDF. */
+  combineAttachments?: boolean
+  /** Stamp every page with a sequential Bates number, or null for none. */
+  bates?: { prefix: string; start: number } | null
+  /** Write a production index spreadsheet (Bates range + metadata per email). */
+  index?: boolean
+}
+
 export interface EmailToPdfResult {
   /** .eml files successfully converted. */
   converted: number
@@ -287,6 +297,10 @@ export interface EmailToPdfResult {
   errors: { file: string; error: string }[]
   /** Absolute paths of the PDFs written. */
   outputs: string[]
+  /** First/last Bates numbers across the set (when Bates stamping is on). */
+  batesRange?: { begin: string; end: string }
+  /** Path to the production index spreadsheet (when requested). */
+  indexPath?: string
 }
 
 // ---- Library / document index ----
@@ -412,7 +426,7 @@ export interface Api {
   }
   emailToPdf: {
     pickFolder: () => Promise<string | null>
-    convert: (inputDir: string, outputDir: string) => Promise<EmailToPdfResult>
+    convert: (inputDir: string, outputDir: string, options?: EmailToPdfOptions) => Promise<EmailToPdfResult>
   }
   export: (input: ExportInput) => Promise<ExportResult>
 }

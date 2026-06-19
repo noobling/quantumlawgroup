@@ -3,6 +3,7 @@ import type {
   AgentEvent,
   Api,
   CreateCollectionInput,
+  EmailToPdfOptions,
   ExportInput,
   IndexEvent,
   PermissionDecision,
@@ -70,8 +71,8 @@ const api: Api = {
   },
   emailToPdf: {
     pickFolder: () => ipcRenderer.invoke('emailToPdf:pickFolder'),
-    convert: (inputDir: string, outputDir: string) =>
-      ipcRenderer.invoke('emailToPdf:convert', inputDir, outputDir)
+    convert: (inputDir: string, outputDir: string, options?: EmailToPdfOptions) =>
+      ipcRenderer.invoke('emailToPdf:convert', inputDir, outputDir, options)
   },
   export: (input: ExportInput) => ipcRenderer.invoke('export', input)
 }
