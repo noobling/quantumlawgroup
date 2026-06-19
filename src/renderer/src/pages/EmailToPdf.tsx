@@ -1,7 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
-import type { EmailToPdfResult } from '@shared/types'
+import type { EmailToPdfProgress, EmailToPdfResult } from '@shared/types'
 import { Mail, FolderOpen, FileType, Loader2, ArrowRight, ShieldCheck, CheckCircle2, AlertTriangle } from 'lucide-react'
+
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return `${m}m ${s % 60}s`
+}
 
 /**
  * Human-facing batch tool: pick a folder of emails and a destination, and
@@ -21,6 +28,11 @@ export default function EmailToPdf(): JSX.Element {
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [index, setIndex] = useState(true)
+  const [progress, setProgress] = useState<EmailToPdfProgress | null>(null)
+  const startRef = useRef(0)
+
+  // Live progress events from the converter (per email).
+  useEffect(() => window.api.emailToPdf.onProgress(setProgress), [])
 
   const pick = async (which: 'in' | 'out'): Promise<void> => {
     const dir = await window.api.emailToPdf.pickFolder()
@@ -34,6 +46,8 @@ export default function EmailToPdf(): JSX.Element {
     if (!input || !output) return
     setRunning(true)
     setResult(null)
+    setProgress(null)
+    startRef.current = Date.now()
     try {
       const r = await window.api.emailToPdf.convert(input, output, {
         combineAttachments: combine,
@@ -110,6 +124,28 @@ export default function EmailToPdf(): JSX.Element {
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileType className="w-4 h-4" />}
             {running ? 'Converting…' : 'Convert emails to PDF'}
           </button>
+
+          {running && progress && progress.total > 0 && (
+            <div className="mt-3">
+              <div className="flex justify-between items-center gap-3 text-[12px] text-ink-600 mb-1.5">
+                <span className="truncate">
+                  Converting {progress.done} of {progress.total}
+                  {progress.file ? ` · ${progress.file}` : ''}
+                </span>
+                <span className="shrink-0">
+                  {progress.done > 0
+                    ? `~${fmtDuration(((Date.now() - startRef.current) / progress.done) * (progress.total - progress.done))} left`
+                    : 'starting…'}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-ink-800 overflow-hidden">
+                <div
+                  className="h-full bg-accent transition-all"
+                  style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
         </section>
 
         {result && (

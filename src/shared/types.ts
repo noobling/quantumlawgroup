@@ -276,6 +276,13 @@ export type PermissionDecision = 'allow' | 'allow-always' | 'deny'
 
 // ---- Email → PDF batch conversion ----
 
+/** Per-email progress while converting a folder of emails to PDF. */
+export interface EmailToPdfProgress {
+  done: number
+  total: number
+  file: string
+}
+
 /** Counsel-review production options for email → PDF. */
 export interface EmailToPdfOptions {
   /** Merge each email's attachments (PDFs/images) onto the end of its PDF. */
@@ -427,6 +434,7 @@ export interface Api {
   emailToPdf: {
     pickFolder: () => Promise<string | null>
     convert: (inputDir: string, outputDir: string, options?: EmailToPdfOptions) => Promise<EmailToPdfResult>
+    onProgress: (cb: (p: EmailToPdfProgress) => void) => () => void
   }
   export: (input: ExportInput) => Promise<ExportResult>
 }

@@ -10,9 +10,11 @@ import { buildEmailHtml } from './emailHtml'
 
 // Batch-convert .eml files in a folder tree to PDFs, mirroring the subfolder
 // structure into an output folder. Each email is parsed (mailparser), its HTML
-// is rendered in a hidden Electron window and printed to PDF (full formatting),
-// inline images are embedded, and file attachments are written to a sibling
-// folder. Non-email files are skipped.
+// is rendered in a shared hidden Electron window and printed to PDF (full
+// formatting), inline images embedded. An email WITH attachments gets its own
+// folder holding the PDF + the native attachment files together; an email
+// without stays a flat PDF. Non-email files are skipped. Progress is reported
+// per email via the onProgress callback.
 
 export type { EmailToPdfResult }
 
@@ -32,18 +34,23 @@ function getRenderSession(): Session {
   return ses
 }
 
-async function renderHtmlToPdf(html: string): Promise<Buffer> {
-  const tmp = path.join(os.tmpdir(), `dsl-email-${process.pid}-${Date.now()}-${Math.round(performance.now())}.html`)
-  await fs.writeFile(tmp, html, 'utf8')
-  const win = new BrowserWindow({
+function makeRenderWindow(): BrowserWindow {
+  return new BrowserWindow({
     show: false,
     width: 900,
     height: 1200,
     webPreferences: { javascript: false, sandbox: true, contextIsolation: true, session: getRenderSession() }
   })
+}
+
+// Render one email's HTML to a PDF using a SHARED window (created once per batch).
+// Reusing the window avoids the heavy per-email window create/destroy cost.
+async function renderInto(win: BrowserWindow, html: string): Promise<Buffer> {
+  const tmp = path.join(os.tmpdir(), `dsl-email-${process.pid}-${Date.now()}-${Math.round(performance.now())}.html`)
+  await fs.writeFile(tmp, html, 'utf8')
   try {
-    await win.loadFile(tmp)
-    await new Promise((r) => setTimeout(r, 150)) // let layout/images settle
+    await win.loadFile(tmp) // resolves on did-finish-load (subresources loaded)
+    await new Promise((r) => setTimeout(r, 30)) // brief settle for final layout
     return Buffer.from(
       await win.webContents.printToPDF({
         printBackground: true,
@@ -52,7 +59,6 @@ async function renderHtmlToPdf(html: string): Promise<Buffer> {
       })
     )
   } finally {
-    win.destroy()
     await fs.rm(tmp, { force: true }).catch(() => {})
   }
 }
@@ -148,7 +154,8 @@ async function collectEml(dir: string, skipDir: string, found: string[], counts:
 export async function convertEmailsToPdf(
   inputDir: string,
   outputDir: string,
-  options: EmailToPdfOptions = {}
+  options: EmailToPdfOptions = {},
+  onProgress?: (p: { done: number; total: number; file: string }) => void
 ): Promise<EmailToPdfResult> {
   const inRoot = path.resolve(inputDir)
   const outRoot = path.resolve(outputDir)
@@ -159,17 +166,21 @@ export async function convertEmailsToPdf(
   await collectEml(inRoot, outRoot, emls, counts)
   result.skipped = counts.skipped
   emls.sort((a, b) => a.localeCompare(b)) // stable order → deterministic Bates sequence
+  onProgress?.({ done: 0, total: emls.length, file: '' })
 
   const batesPrefix = options.bates?.prefix ?? ''
   let batesNext = options.bates?.start ?? 1
   const PAD = 6
   const indexRows: string[][] = []
 
-  for (const eml of emls) {
+  const win = makeRenderWindow() // one shared window for the whole batch
+  try {
+  for (let idx = 0; idx < emls.length; idx++) {
+    const eml = emls[idx]
     try {
       const mail = await simpleParser(await fs.readFile(eml))
       const { html, fileAttachments } = buildEmailHtml(mail)
-      let pdf = await renderHtmlToPdf(html)
+      let pdf = await renderInto(win, html)
 
       // Combine the family into one document (email + attachments) if requested.
       if (options.combineAttachments && fileAttachments.length) {
@@ -189,23 +200,26 @@ export async function convertEmailsToPdf(
         batesNext += s.pages
       }
 
-      const rel = path.relative(inRoot, eml).replace(/\.eml$/i, '.pdf')
-      const outPath = path.join(outRoot, rel)
-      await fs.mkdir(path.dirname(outPath), { recursive: true })
+      // Group an email and its attachments in one folder named after the email;
+      // emails without attachments stay as a flat PDF (mirroring the input).
+      const relDir = path.dirname(path.relative(inRoot, eml))
+      const base = path.basename(eml).replace(/\.eml$/i, '')
+      const hasAtts = fileAttachments.length > 0
+      const folder = hasAtts ? path.join(outRoot, relDir, base) : path.join(outRoot, relDir)
+      const outPath = path.join(folder, base + '.pdf')
+      await fs.mkdir(folder, { recursive: true })
       await fs.writeFile(outPath, pdf)
       result.outputs.push(outPath)
       result.converted++
 
-      // Always keep the native attachments alongside (authenticity / native production).
-      if (fileAttachments.length) {
-        const attDir = outPath.replace(/\.pdf$/i, '') + ' - attachments'
-        await fs.mkdir(attDir, { recursive: true })
-        const used = new Set<string>()
+      // Keep the native attachments in the SAME folder as the email PDF.
+      if (hasAtts) {
+        const used = new Set<string>([(base + '.pdf').toLowerCase()]) // don't clash with the email PDF
         for (const a of fileAttachments) {
           let name = safeName(a.filename || 'attachment')
           while (used.has(name.toLowerCase())) name = '_' + name
           used.add(name.toLowerCase())
-          await fs.writeFile(path.join(attDir, name), a.content)
+          await fs.writeFile(path.join(folder, name), a.content)
           result.attachments++
         }
       }
@@ -226,6 +240,10 @@ export async function convertEmailsToPdf(
     } catch (e) {
       result.errors.push({ file: eml, error: (e as Error).message })
     }
+    onProgress?.({ done: idx + 1, total: emls.length, file: path.basename(eml) })
+  }
+  } finally {
+    win.destroy()
   }
 
   if (options.bates && indexRows.length) {

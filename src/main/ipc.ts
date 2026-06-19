@@ -297,7 +297,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
   })
   ipcMain.handle('emailToPdf:convert', (_e, inputDir: string, outputDir: string, options?: EmailToPdfOptions) =>
-    convertEmailsToPdf(inputDir, outputDir, options)
+    convertEmailsToPdf(inputDir, outputDir, options, (p) => _e.sender.send('emailToPdf:progress', p))
   )
 
   ipcMain.handle('library:exportHighlights', async (_e, id: string, format: 'csv' | 'xlsx'): Promise<ExportResult> => {
