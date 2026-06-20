@@ -5,7 +5,6 @@ import type {
   AgentEvent,
   Collection,
   CreateCollectionInput,
-  EmailToPdfOptions,
   ExportInput,
   ExportResult,
   IndexedDoc,
@@ -28,7 +27,6 @@ import { createOllamaProvider } from './agent/ollama'
 import { cancel, sendMessage, startThread } from './agent/runAgent'
 import { resolvePermission } from './permissions'
 import { markdownToDocx, markdownToPdf, markdownToXlsx, markdownToTrackedDocx, rowsToXlsx } from './export/convert'
-import { convertEmailsToPdf } from './export/emailToPdf'
 import { getDocument } from './storage/store'
 import {
   deleteCollection,
@@ -247,18 +245,28 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'multiSelections'] })
     return res.canceled ? [] : res.filePaths
   })
+  ipcMain.handle('library:pickOutput', async (): Promise<string | null> => {
+    const win = getWindow()
+    const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
+    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
+  })
   ipcMain.handle('library:create', async (_e, input: CreateCollectionInput): Promise<Collection> => {
     const now = Date.now()
     const id = 'col_' + now.toString(36) + Math.random().toString(36).slice(2, 6)
+    const features = input.features
     const c: Collection = {
       id,
-      name: input.name || 'Untitled collection',
+      name: input.name || 'Untitled document set',
       folders: input.folders,
+      output: input.output || undefined,
       createdAt: now,
       updatedAt: now,
       fileCount: 0,
       status: 'indexing',
-      aiEnrich: !!input.aiEnrich
+      features,
+      bates: input.bates,
+      combineAttachments: input.combineAttachments,
+      aiEnrich: !!(input.aiEnrich || features?.aiEnrich)
     }
     await saveCollection(c)
     void buildIndex(id, emitIndex)
@@ -289,16 +297,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return { ok: false, error: (e as Error).message }
     }
   })
-
-  // Email → PDF (also usable from the UI, not just the agent tool).
-  ipcMain.handle('emailToPdf:pickFolder', async (): Promise<string | null> => {
-    const win = getWindow()
-    const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
-    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
-  })
-  ipcMain.handle('emailToPdf:convert', (_e, inputDir: string, outputDir: string, options?: EmailToPdfOptions) =>
-    convertEmailsToPdf(inputDir, outputDir, options, (p) => _e.sender.send('emailToPdf:progress', p))
-  )
 
   ipcMain.handle('library:exportHighlights', async (_e, id: string, format: 'csv' | 'xlsx'): Promise<ExportResult> => {
     try {

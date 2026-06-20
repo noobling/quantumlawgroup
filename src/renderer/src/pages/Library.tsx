@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useStore } from '../state/store'
-import type { Collection } from '@shared/types'
+import type { Collection, ProcessFeatures } from '@shared/types'
 import {
-  Library as LibraryIcon,
+  FolderCog,
   FolderPlus,
   FolderOpen,
+  FolderInput,
   RefreshCw,
   Trash2,
   Loader2,
@@ -12,7 +13,12 @@ import {
   Sparkles,
   X,
   FileStack,
-  HardDrive
+  HardDrive,
+  Mail,
+  FileSpreadsheet,
+  Send,
+  Highlighter,
+  Hash
 } from 'lucide-react'
 
 export default function Library(): JSX.Element {
@@ -25,13 +31,14 @@ export default function Library(): JSX.Element {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="font-serif text-3xl font-bold text-slate-100 flex items-center gap-3">
-              <LibraryIcon className="w-7 h-7 text-accent" /> Library
+              <FolderCog className="w-7 h-7 text-accent" /> Process documents
             </h1>
             <p className="text-ink-600 mt-2 text-[15px]">
-              Index a folder of documents — emails, contracts, anything — into a searchable, exportable catalog.
+              Point at a group of documents, pick what to produce — searchable index, email→PDF, an internal or external
+              production index, highlights — and get one output bundle.
             </p>
             <div className="mt-2.5 inline-flex items-center gap-1.5 text-[11.5px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2.5 py-1">
-              <HardDrive className="w-3.5 h-3.5" /> Indexing &amp; search run 100% on your computer — no documents leave the device
+              <HardDrive className="w-3.5 h-3.5" /> Everything runs 100% on your computer — no documents leave the device
               <span className="text-emerald-300/60">(unless you enable AI summaries)</span>
             </div>
           </div>
@@ -39,14 +46,14 @@ export default function Library(): JSX.Element {
             onClick={() => setShowNew(true)}
             className="shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg bg-accent text-ink-950 font-medium text-sm hover:bg-accent-soft"
           >
-            <Plus className="w-4 h-4" /> New collection
+            <Plus className="w-4 h-4" /> New document set
           </button>
         </div>
 
         {collections.length === 0 && !showNew && (
           <div className="mt-12 text-center text-ink-600">
             <FileStack className="w-12 h-12 mx-auto opacity-40" />
-            <p className="mt-3">No collections yet. Create one to index a folder of documents.</p>
+            <p className="mt-3">No document sets yet. Create one to process a folder of documents.</p>
           </div>
         )}
 
@@ -64,7 +71,31 @@ export default function Library(): JSX.Element {
         </div>
       </div>
 
-      {showNew && <NewCollection onClose={() => setShowNew(false)} />}
+      {showNew && <NewJob onClose={() => setShowNew(false)} />}
+    </div>
+  )
+}
+
+function FeatureChips({ c }: { c: Collection }): JSX.Element | null {
+  const f = c.features
+  if (!f) return null
+  const chips: { on: boolean; icon: JSX.Element; label: string }[] = [
+    { on: f.emailToPdf, icon: <Mail className="w-3 h-3" />, label: 'Email→PDF' },
+    { on: f.internalIndex, icon: <FileSpreadsheet className="w-3 h-3" />, label: 'Internal' },
+    { on: f.externalIndex, icon: <Send className="w-3 h-3" />, label: 'External' },
+    { on: f.highlights, icon: <Highlighter className="w-3 h-3" />, label: 'Highlights' },
+    { on: f.aiEnrich, icon: <Sparkles className="w-3 h-3" />, label: 'AI' }
+  ]
+  const active = chips.filter((ch) => ch.on)
+  if (!active.length) return null
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {active.map((ch) => (
+        <span key={ch.label} className="inline-flex items-center gap-1 text-[10.5px] text-accent/90 bg-accent/10 border border-accent/20 rounded px-1.5 py-0.5">
+          {ch.icon}
+          {ch.label}
+        </span>
+      ))}
     </div>
   )
 }
@@ -91,29 +122,37 @@ function CollectionCard({
         <div className="text-[12px] text-ink-600 mt-0.5 truncate">{c.folders.join(', ')}</div>
       </button>
 
+      <FeatureChips c={c} />
+
       <div className="mt-3 flex items-center justify-between">
         <div className="text-[12px] text-ink-600">
           {indexing ? (
             <span className="text-accent flex items-center gap-1.5">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              {progress ? `${progress.phase}… ${progress.done}/${progress.total}` : 'Indexing…'}
+              {progress ? `${progress.phase}… ${progress.done}/${progress.total}` : 'Processing…'}
             </span>
           ) : c.status === 'error' ? (
             <span className="text-red-400">Error: {c.error}</span>
           ) : (
-            <span>
-              {c.fileCount} document{c.fileCount === 1 ? '' : 's'}
-              {c.aiEnrich ? ' · AI summaries' : ''}
+            <span className="flex items-center gap-1.5 flex-wrap">
+              <span>
+                {c.fileCount} document{c.fileCount === 1 ? '' : 's'}
+              </span>
+              {c.production?.batesRange && (
+                <span className="inline-flex items-center gap-1 text-ink-600">
+                  <Hash className="w-3 h-3" /> {c.production.batesRange.begin}–{c.production.batesRange.end}
+                </span>
+              )}
             </span>
           )}
         </div>
         <div className="flex items-center gap-1">
           {!indexing && (
             <>
-              <button onClick={onOpen} title="Open index" className="p-1.5 rounded text-ink-600 hover:text-slate-200 hover:bg-ink-800">
+              <button onClick={onOpen} title="Open" className="p-1.5 rounded text-ink-600 hover:text-slate-200 hover:bg-ink-800">
                 <FolderOpen className="w-4 h-4" />
               </button>
-              <button onClick={onReindex} title="Re-index" className="p-1.5 rounded text-ink-600 hover:text-slate-200 hover:bg-ink-800">
+              <button onClick={onReindex} title="Re-run" className="p-1.5 rounded text-ink-600 hover:text-slate-200 hover:bg-ink-800">
                 <RefreshCw className="w-4 h-4" />
               </button>
             </>
@@ -133,33 +172,86 @@ function CollectionCard({
   )
 }
 
-function NewCollection({ onClose }: { onClose: () => void }): JSX.Element {
+function Toggle({
+  checked,
+  onChange,
+  icon,
+  title,
+  desc
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  icon: JSX.Element
+  title: string
+  desc: string
+}): JSX.Element {
+  return (
+    <label className="flex items-start gap-2.5 cursor-pointer rounded-lg p-2 hover:bg-ink-950/50">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
+      <span className="text-[13px] text-slate-300 min-w-0">
+        <span className="flex items-center gap-1.5 font-medium text-slate-200">
+          {icon}
+          {title}
+        </span>
+        <span className="text-ink-600">{desc}</span>
+      </span>
+    </label>
+  )
+}
+
+function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const { createCollection } = useStore()
   const [name, setName] = useState('')
   const [folders, setFolders] = useState<string[]>([])
+  const [output, setOutput] = useState('')
+  const [emailToPdf, setEmailToPdf] = useState(true)
+  const [internalIndex, setInternalIndex] = useState(true)
+  const [externalIndex, setExternalIndex] = useState(false)
+  const [highlights, setHighlights] = useState(false)
   const [aiEnrich, setAiEnrich] = useState(false)
+  const [combine, setCombine] = useState(true)
+  const [batesPrefix, setBatesPrefix] = useState('DOC-')
+  const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
 
-  const pick = async (): Promise<void> => {
+  const wantsOutput = emailToPdf || internalIndex || externalIndex || highlights
+  const wantsBates = internalIndex || externalIndex || emailToPdf
+
+  const pickInputs = async (): Promise<void> => {
     const picked = await window.api.library.pickFolders()
     if (picked.length) setFolders((f) => Array.from(new Set([...f, ...picked])))
   }
+  const pickOutput = async (): Promise<void> => {
+    const dir = await window.api.library.pickOutput()
+    if (dir) setOutput(dir)
+  }
+
+  const canCreate = folders.length > 0 && (!wantsOutput || !!output) && !busy
 
   const create = async (): Promise<void> => {
-    if (!folders.length || busy) return
+    if (!canCreate) return
     setBusy(true)
-    await createCollection({ name: name.trim() || 'Untitled collection', folders, aiEnrich })
+    const features: ProcessFeatures = { emailToPdf, internalIndex, externalIndex, highlights, aiEnrich }
+    await createCollection({
+      name: name.trim() || 'Untitled document set',
+      folders,
+      output: wantsOutput ? output : undefined,
+      features,
+      bates: wantsBates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : undefined,
+      combineAttachments: combine,
+      aiEnrich
+    })
     onClose()
   }
 
   return (
     <div className="fixed inset-0 z-40 bg-ink-950/70 grid place-items-center p-6" onClick={onClose}>
       <div
-        className="w-full max-w-lg rounded-2xl border border-ink-700 bg-ink-900 shadow-2xl p-6"
+        className="w-full max-w-lg max-h-[88vh] overflow-y-auto rounded-2xl border border-ink-700 bg-ink-900 shadow-2xl p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h2 className="font-serif text-xl font-semibold text-slate-100">New collection</h2>
+          <h2 className="font-serif text-xl font-semibold text-slate-100">New document set</h2>
           <button onClick={onClose} className="text-ink-600 hover:text-slate-200">
             <X className="w-5 h-5" />
           </button>
@@ -169,13 +261,13 @@ function NewCollection({ onClose }: { onClose: () => void }): JSX.Element {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Acme correspondence"
+          placeholder="e.g. Acme production — set 1"
           className="mt-1 w-full rounded-lg bg-ink-950 border border-ink-700 px-3 py-2 text-sm text-slate-100 focus:border-accent outline-none"
         />
 
-        <label className="block mt-4 text-[13px] text-ink-600">Folders to index</label>
+        <label className="block mt-4 text-[13px] text-ink-600">Input folders</label>
         <button
-          onClick={() => void pick()}
+          onClick={() => void pickInputs()}
           className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-ink-600 text-sm text-slate-300 hover:border-accent hover:text-accent w-full justify-center"
         >
           <FolderPlus className="w-4 h-4" /> Add folder…
@@ -193,15 +285,51 @@ function NewCollection({ onClose }: { onClose: () => void }): JSX.Element {
           </ul>
         )}
 
-        <label className="mt-4 flex items-start gap-2.5 cursor-pointer">
-          <input type="checkbox" checked={aiEnrich} onChange={(e) => setAiEnrich(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
-          <span className="text-[13px] text-slate-300">
-            <span className="flex items-center gap-1.5 font-medium">
-              <Sparkles className="w-3.5 h-3.5 text-accent" /> Generate AI summaries
-            </span>
-            <span className="text-ink-600">Adds a one-line summary, document type, and parties per document (uses the API; slower).</span>
-          </span>
-        </label>
+        <div className="mt-5 text-[13px] text-ink-600">Produce</div>
+        <div className="mt-1 rounded-lg border border-ink-700/70 bg-ink-900/40 divide-y divide-ink-800/70">
+          <Toggle checked={emailToPdf} onChange={setEmailToPdf} icon={<Mail className="w-3.5 h-3.5 text-accent" />} title="Convert emails to PDF" desc="Render each .eml to a readable PDF (attachments alongside)." />
+          <Toggle checked={internalIndex} onChange={setInternalIndex} icon={<FileSpreadsheet className="w-3.5 h-3.5 text-accent" />} title="Internal review index (Excel)" desc="Bates, date, type, from/to, subject — for your own team." />
+          <Toggle checked={externalIndex} onChange={setExternalIndex} icon={<Send className="w-3.5 h-3.5 text-accent" />} title="External production load file (.DAT + CSV)" desc="For opposing counsel / a review platform; family ranges + Bates." />
+          <Toggle checked={highlights} onChange={setHighlights} icon={<Highlighter className="w-3.5 h-3.5 text-accent" />} title="Highlights table" desc="Extract every reviewer highlight to a spreadsheet." />
+          <Toggle checked={aiEnrich} onChange={setAiEnrich} icon={<Sparkles className="w-3.5 h-3.5 text-accent" />} title="AI summaries" desc="One-line summary, type, and parties per doc (uses the API; slower)." />
+        </div>
+
+        {(internalIndex || externalIndex) && (
+          <p className="mt-2 text-[11.5px] text-ink-600">
+            An internal/external index renders <span className="text-slate-400">every</span> document to a Bates-numbered PDF
+            in the output folder.
+          </p>
+        )}
+
+        {wantsOutput && (
+          <>
+            <label className="block mt-4 text-[13px] text-ink-600">Output folder (the deliverable bundle)</label>
+            <button
+              onClick={() => void pickOutput()}
+              className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-ink-600 text-sm text-slate-300 hover:border-accent hover:text-accent w-full justify-center"
+            >
+              <FolderInput className="w-4 h-4" /> {output ? 'Change output folder…' : 'Choose output folder…'}
+            </button>
+            {output && <div className="mt-1.5 text-[12px] text-slate-400 bg-ink-950 rounded px-2 py-1 truncate">{output}</div>}
+          </>
+        )}
+
+        {wantsBates && (
+          <div className="mt-4 rounded-lg border border-ink-700/70 bg-ink-900/40 p-3 space-y-2.5">
+            <label className="flex items-center gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
+              <input type="checkbox" checked={combine} onChange={(e) => setCombine(e.target.checked)} className="accent-[#c9a24b]" />
+              Combine each email + its attachments into one PDF
+            </label>
+            <div className="flex items-center gap-2 text-[12px]">
+              <Hash className="w-3.5 h-3.5 text-ink-600" />
+              <span className="text-ink-600">Bates prefix</span>
+              <input value={batesPrefix} onChange={(e) => setBatesPrefix(e.target.value)} className="w-24 bg-ink-950 border border-ink-700 rounded px-2 py-1 text-slate-200 outline-none focus:border-accent/60" />
+              <span className="text-ink-600">start</span>
+              <input value={batesStart} onChange={(e) => setBatesStart(e.target.value.replace(/[^0-9]/g, ''))} className="w-20 bg-ink-950 border border-ink-700 rounded px-2 py-1 text-slate-200 outline-none focus:border-accent/60" />
+              <span className="text-ink-600">e.g. {batesPrefix}{String(Math.max(1, parseInt(batesStart, 10) || 1)).padStart(6, '0')}</span>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 flex justify-end gap-2">
           <button onClick={onClose} className="px-3.5 py-2 rounded-lg text-sm text-slate-300 hover:bg-ink-800">
@@ -209,11 +337,11 @@ function NewCollection({ onClose }: { onClose: () => void }): JSX.Element {
           </button>
           <button
             onClick={() => void create()}
-            disabled={!folders.length || busy}
+            disabled={!canCreate}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-ink-950 font-medium text-sm hover:bg-accent-soft disabled:opacity-40"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileStack className="w-4 h-4" />}
-            Create & index
+            Process
           </button>
         </div>
       </div>

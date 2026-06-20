@@ -7,7 +7,6 @@ import Settings from './pages/Settings'
 import Library from './pages/Library'
 import Collection from './pages/Collection'
 import Highlights from './pages/Highlights'
-import EmailToPdf from './pages/EmailToPdf'
 import SuperDocSpike from './pages/SuperDocSpike'
 import SyncfusionSpike from './pages/SyncfusionSpike'
 import DotnetWordSpike from './pages/DotnetWordSpike'
@@ -40,7 +39,6 @@ export default function App(): JSX.Element {
         {route === 'library' && <Library />}
         {route === 'collection' && <Collection />}
         {route === 'highlights' && <Highlights />}
-        {route === 'email-to-pdf' && <EmailToPdf />}
         {route === 'superdoc-spike' && <SuperDocSpike />}
         {route === 'syncfusion-spike' && <SyncfusionSpike />}
         {route === 'dotnet-word-spike' && <DotnetWordSpike />}

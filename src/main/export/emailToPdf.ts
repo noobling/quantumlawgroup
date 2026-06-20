@@ -34,7 +34,7 @@ function getRenderSession(): Session {
   return ses
 }
 
-function makeRenderWindow(): BrowserWindow {
+export function makeRenderWindow(): BrowserWindow {
   return new BrowserWindow({
     show: false,
     width: 900,
@@ -45,7 +45,7 @@ function makeRenderWindow(): BrowserWindow {
 
 // Render one email's HTML to a PDF using a SHARED window (created once per batch).
 // Reusing the window avoids the heavy per-email window create/destroy cost.
-async function renderInto(win: BrowserWindow, html: string): Promise<Buffer> {
+export async function renderInto(win: BrowserWindow, html: string): Promise<Buffer> {
   const tmp = path.join(os.tmpdir(), `dsl-email-${process.pid}-${Date.now()}-${Math.round(performance.now())}.html`)
   await fs.writeFile(tmp, html, 'utf8')
   try {
@@ -63,13 +63,13 @@ async function renderInto(win: BrowserWindow, html: string): Promise<Buffer> {
   }
 }
 
-function safeName(name: string): string {
+export function safeName(name: string): string {
   return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 200) || 'attachment'
 }
 
 /** Append each attachment (PDFs page-for-page, images as a page) onto the email
  *  PDF, with a labeled divider page before each, into one family document. */
-async function combineFamily(emailPdf: Buffer, attachments: Attachment[]): Promise<Buffer> {
+export async function combineFamily(emailPdf: Buffer, attachments: Attachment[]): Promise<Buffer> {
   const doc = await PDFDocument.load(emailPdf)
   const font = await doc.embedFont(StandardFonts.HelveticaBold)
 
@@ -110,7 +110,7 @@ async function combineFamily(emailPdf: Buffer, attachments: Attachment[]): Promi
 }
 
 /** Stamp every page with a Bates number at the bottom-right. */
-async function stampBates(
+export async function stampBates(
   pdf: Buffer,
   startNum: number,
   prefix: string,
@@ -151,7 +151,7 @@ async function collectEml(dir: string, skipDir: string, found: string[], counts:
   }
 }
 
-interface EmailRecord {
+export interface EmailRecord {
   begBates: string
   endBates: string
   pages: number
@@ -167,7 +167,7 @@ interface EmailRecord {
 
 // Concordance/Relativity .DAT load file: text qualifier U+00FE, field
 // separator U+0014; CRLF rows; UTF-8 BOM.
-function toDat(rows: string[][]): string {
+export function toDat(rows: string[][]): string {
   const q = '\u00FE'
   const sep = '\u0014'
   // Strip the structural delimiters (qualifier/separator) from values and flatten
@@ -178,7 +178,7 @@ function toDat(rows: string[][]): string {
 }
 
 // Universal CSV (UTF-8 BOM so Excel reads it; RFC-4180 quoting).
-function toCsv(rows: string[][]): string {
+export function toCsv(rows: string[][]): string {
   const cell = (c: string): string => (/[",\r\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c)
   return '\uFEFF' + rows.map((r) => r.map((c) => cell(c || '')).join(',')).join('\r\n') + '\r\n'
 }

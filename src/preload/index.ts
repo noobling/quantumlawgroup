@@ -3,8 +3,6 @@ import type {
   AgentEvent,
   Api,
   CreateCollectionInput,
-  EmailToPdfOptions,
-  EmailToPdfProgress,
   ExportInput,
   IndexEvent,
   PermissionDecision,
@@ -64,20 +62,11 @@ const api: Api = {
     exportHighlights: (id: string, format: 'csv' | 'xlsx') =>
       ipcRenderer.invoke('library:exportHighlights', id, format),
     pickFolders: () => ipcRenderer.invoke('library:pickFolders'),
+    pickOutput: () => ipcRenderer.invoke('library:pickOutput'),
     onEvent: (cb: (e: IndexEvent) => void) => {
       const listener = (_e: unknown, payload: IndexEvent): void => cb(payload)
       ipcRenderer.on('index:event', listener)
       return () => ipcRenderer.removeListener('index:event', listener)
-    }
-  },
-  emailToPdf: {
-    pickFolder: () => ipcRenderer.invoke('emailToPdf:pickFolder'),
-    convert: (inputDir: string, outputDir: string, options?: EmailToPdfOptions) =>
-      ipcRenderer.invoke('emailToPdf:convert', inputDir, outputDir, options),
-    onProgress: (cb: (p: EmailToPdfProgress) => void) => {
-      const listener = (_e: unknown, payload: EmailToPdfProgress): void => cb(payload)
-      ipcRenderer.on('emailToPdf:progress', listener)
-      return () => ipcRenderer.removeListener('emailToPdf:progress', listener)
     }
   },
   export: (input: ExportInput) => ipcRenderer.invoke('export', input)

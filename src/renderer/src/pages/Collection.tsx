@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../state/store'
-import type { IndexedDoc } from '@shared/types'
+import type { Collection as CollectionType, IndexedDoc } from '@shared/types'
 import {
   ArrowLeft,
   Search,
@@ -11,7 +11,11 @@ import {
   ExternalLink,
   Loader2,
   ArrowUpDown,
-  Highlighter
+  Highlighter,
+  FolderOpen,
+  Send,
+  Mail,
+  FileStack
 } from 'lucide-react'
 
 type Col = { key: keyof IndexedDoc; label: string }
@@ -99,13 +103,13 @@ export default function Collection(): JSX.Element {
   return (
     <div className="flex-1 min-w-0 flex flex-col">
       <header className="h-14 shrink-0 border-b border-ink-700/60 bg-ink-900/60 flex items-center gap-3 px-5">
-        <button onClick={() => setRoute('library')} className="text-ink-600 hover:text-slate-200" title="Back to Library">
+        <button onClick={() => setRoute('library')} className="text-ink-600 hover:text-slate-200" title="Back to Documents">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="min-w-0">
           <div className="text-[14px] font-medium text-slate-100 truncate">{c.name}</div>
           <div className="text-[11px] text-ink-600">
-            {c.fileCount} documents{indexing ? ' · indexing…' : ''}
+            {c.fileCount} documents{indexing ? ' · processing…' : ''}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -122,7 +126,7 @@ export default function Collection(): JSX.Element {
             disabled={indexing}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-40"
           >
-            {indexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Re-index
+            {indexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Re-run
           </button>
           <button
             onClick={() => void exportIndex('xlsx')}
@@ -139,13 +143,18 @@ export default function Collection(): JSX.Element {
         </div>
       </header>
 
-      <div className="px-5 py-3 border-b border-ink-700/40">
+      {c.output && <OutputsPanel c={c} indexing={indexing} />}
+
+      <div className="px-5 pt-3 pb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-ink-600">
+        <FileStack className="w-3.5 h-3.5" /> Input documents
+      </div>
+      <div className="px-5 py-2 border-b border-ink-700/40">
         <div className="relative max-w-xl">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-600" />
           <input
             value={query}
             onChange={(e) => runSearch(e.target.value)}
-            placeholder="Search this index…"
+            placeholder="Search the indexed documents…"
             className="w-full rounded-lg bg-ink-950 border border-ink-700 pl-9 pr-9 py-2 text-sm text-slate-100 focus:border-accent outline-none"
           />
           {query && (
@@ -212,6 +221,78 @@ export default function Collection(): JSX.Element {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  )
+}
+
+/** The production bundle — prioritized above the input documents. */
+function OutputsPanel({ c, indexing }: { c: CollectionType; indexing: boolean }): JSX.Element {
+  const p = c.production
+  const reveal = (path: string): void => void window.api.files.reveal(path)
+  const base = (path?: string): string => (path ? path.split(/[\\/]/).pop() || path : '')
+
+  const artifacts: { show: boolean; icon: JSX.Element; label: string; sub: string; path?: string }[] = [
+    {
+      show: !!p && p.pdfCount > 0,
+      icon: <FileStack className="w-4 h-4 text-accent" />,
+      label: `${p?.pdfCount ?? 0} PDF${p?.pdfCount === 1 ? '' : 's'} produced`,
+      sub: p?.batesRange ? `Bates ${p.batesRange.begin}–${p.batesRange.end}` : 'rendered to the output folder'
+    },
+    { show: !!p?.indexPath, icon: <FileSpreadsheet className="w-4 h-4 text-accent" />, label: 'Internal review index', sub: base(p?.indexPath), path: p?.indexPath },
+    { show: !!p?.loadFilePath, icon: <Send className="w-4 h-4 text-accent" />, label: 'External load file', sub: base(p?.loadFilePath) + ' + .csv', path: p?.loadFilePath },
+    { show: !!p?.highlightsPath, icon: <Highlighter className="w-4 h-4 text-accent" />, label: 'Highlights table', sub: base(p?.highlightsPath), path: p?.highlightsPath }
+  ]
+  const shown = artifacts.filter((a) => a.show)
+
+  return (
+    <div className="px-5 pt-4">
+      <div className="rounded-xl border border-accent/30 bg-accent/[0.05] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-accent/90">
+            <Mail className="w-3.5 h-3.5" /> Production output
+          </div>
+          <button
+            onClick={() => c.output && reveal(c.output)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] bg-accent text-ink-950 font-medium hover:bg-accent-soft"
+          >
+            <FolderOpen className="w-4 h-4" /> Open output folder
+          </button>
+        </div>
+        <div className="mt-1 text-[12px] text-ink-600 truncate" title={c.output}>{c.output}</div>
+
+        {indexing ? (
+          <div className="mt-3 text-[12.5px] text-accent flex items-center gap-1.5">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Building the production…
+          </div>
+        ) : shown.length === 0 ? (
+          <div className="mt-3 text-[12.5px] text-ink-600">No artifacts produced yet — re-run to build them.</div>
+        ) : (
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {shown.map((a) => (
+              <button
+                key={a.label}
+                onClick={() => a.path && reveal(a.path)}
+                disabled={!a.path}
+                className={`flex items-start gap-2.5 text-left rounded-lg border border-ink-700/70 bg-ink-900/50 p-2.5 ${a.path ? 'hover:border-accent/50' : 'cursor-default'}`}
+              >
+                {a.icon}
+                <span className="min-w-0">
+                  <span className="block text-[12.5px] text-slate-200">{a.label}</span>
+                  <span className="block text-[11px] text-ink-600 truncate">{a.sub}</span>
+                </span>
+                {a.path && <ExternalLink className="w-3.5 h-3.5 text-ink-600 ml-auto shrink-0" />}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {p && (p.slipSheets > 0 || p.errors.length > 0) && (
+          <div className="mt-2.5 text-[11.5px] text-ink-600">
+            {p.slipSheets > 0 && <span>{p.slipSheets} slip-sheeted (native produced alongside). </span>}
+            {p.errors.length > 0 && <span className="text-amber-300/80">{p.errors.length} file{p.errors.length === 1 ? '' : 's'} could not be produced.</span>}
+          </div>
+        )}
       </div>
     </div>
   )

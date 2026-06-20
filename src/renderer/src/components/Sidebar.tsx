@@ -1,5 +1,5 @@
 import { useStore, providerReady } from '../state/store'
-import { Scale, LayoutGrid, Library, Settings as SettingsIcon, FileText, KeyRound, Cpu, Loader2, Mail } from 'lucide-react'
+import { Scale, LayoutGrid, FolderCog, Settings as SettingsIcon, FileText, KeyRound, Cpu, Loader2 } from 'lucide-react'
 
 export default function Sidebar(): JSX.Element {
   const { route, setRoute, matters, openMatter, currentMatterId, settings, keyPresent, runningMatters } = useStore()
@@ -22,11 +22,8 @@ export default function Sidebar(): JSX.Element {
         <NavItem active={route === 'launchpad'} onClick={() => setRoute('launchpad')} icon={<LayoutGrid className="w-4 h-4" />}>
           Workflows
         </NavItem>
-        <NavItem active={route === 'library' || route === 'collection'} onClick={() => setRoute('library')} icon={<Library className="w-4 h-4" />}>
-          Library
-        </NavItem>
-        <NavItem active={route === 'email-to-pdf'} onClick={() => setRoute('email-to-pdf')} icon={<Mail className="w-4 h-4" />}>
-          Email → PDF
+        <NavItem active={route === 'library' || route === 'collection' || route === 'highlights'} onClick={() => setRoute('library')} icon={<FolderCog className="w-4 h-4" />}>
+          Documents
         </NavItem>
         <NavItem active={route === 'settings'} onClick={() => setRoute('settings')} icon={<SettingsIcon className="w-4 h-4" />}>
           Settings

@@ -318,16 +318,62 @@ export interface EmailToPdfResult {
 
 export type CollectionStatus = 'idle' | 'indexing' | 'ready' | 'error'
 
+/**
+ * Opt-in processors a document set can run. The input is always indexed (so it's
+ * browsable + searchable); these add deliverables written to the output folder.
+ */
+export interface ProcessFeatures {
+  /** Convert emails to readable PDFs. (A full production renders every doc too.) */
+  emailToPdf: boolean
+  /** Internal review index spreadsheet over the whole set (for your own team). */
+  internalIndex: boolean
+  /** External production load file (.DAT + .CSV) over the whole set (for counsel). */
+  externalIndex: boolean
+  /** Extract reviewer highlights and write a highlights table. */
+  highlights: boolean
+  /** Enrich each doc with a Claude-generated summary / type / parties. */
+  aiEnrich: boolean
+}
+
+/** Artifacts the production pass writes under the output folder. */
+export interface ProductionResult {
+  /** Documents rendered to (Bates-stamped) PDF in the output folder. */
+  pdfCount: number
+  /** First/last Bates numbers across the production. */
+  batesRange?: { begin: string; end: string }
+  /** Internal review index spreadsheet (filename under the output folder). */
+  indexPath?: string
+  /** External production load file (.DAT; a .CSV sits beside it). */
+  loadFilePath?: string
+  /** Highlights table (xlsx). */
+  highlightsPath?: string
+  /** Unrenderable files given a native slip-sheet placeholder (still Bates-stamped). */
+  slipSheets: number
+  /** Per-file errors during production (non-fatal; the file is skipped). */
+  errors: { file: string; error: string }[]
+}
+
 export interface Collection {
   id: string
   name: string
+  /** Input folders that get walked + indexed. */
   folders: string[]
+  /** Production output folder (the deliverable bundle); unset for index-only sets. */
+  output?: string
   createdAt: number
   updatedAt: number
   fileCount: number
   status: CollectionStatus
+  /** Opt-in processors. Legacy collections (pre-unification) only carried `aiEnrich`. */
+  features?: ProcessFeatures
+  /** Bates numbering config for the production (prefix + start number). */
+  bates?: { prefix: string; start: number }
+  /** Merge each email's attachments onto the end of its PDF. */
+  combineAttachments?: boolean
   /** Whether to enrich each doc with a Claude-generated summary/type/parties. */
   aiEnrich: boolean
+  /** Production artifacts produced on the last run. */
+  production?: ProductionResult
   error?: string
 }
 
@@ -379,6 +425,12 @@ export interface LibrarySearchHit {
 export interface CreateCollectionInput {
   name: string
   folders: string[]
+  /** Production output folder (required when any production feature is enabled). */
+  output?: string
+  features: ProcessFeatures
+  /** Bates numbering config (prefix + start). Defaults applied if omitted. */
+  bates?: { prefix: string; start: number }
+  combineAttachments?: boolean
   aiEnrich: boolean
 }
 
@@ -433,12 +485,9 @@ export interface Api {
     exportIndex: (id: string, format: 'xlsx' | 'docx') => Promise<ExportResult>
     exportHighlights: (id: string, format: 'csv' | 'xlsx') => Promise<ExportResult>
     pickFolders: () => Promise<string[]>
+    /** Pick the single production output folder (created if needed). */
+    pickOutput: () => Promise<string | null>
     onEvent: (cb: (e: IndexEvent) => void) => () => void
-  }
-  emailToPdf: {
-    pickFolder: () => Promise<string | null>
-    convert: (inputDir: string, outputDir: string, options?: EmailToPdfOptions) => Promise<EmailToPdfResult>
-    onProgress: (cb: (p: EmailToPdfProgress) => void) => () => void
   }
   export: (input: ExportInput) => Promise<ExportResult>
 }

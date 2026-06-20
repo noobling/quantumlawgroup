@@ -15,6 +15,7 @@ import {
 } from './store'
 import { getProvider } from '../agent/provider'
 import { getSettings } from '../storage/store'
+import { buildProduction } from '../export/production'
 
 type Emit = (e: IndexEvent) => void
 
@@ -161,6 +162,19 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
     await saveLexical(collectionId, lexical)
     await saveDocs(collectionId, docs)
     collection.fileCount = docs.length
+
+    // Production pass: render + index the set into the output folder, per the
+    // enabled features. Best-effort relative to the index — a production failure
+    // is recorded but doesn't poison the (already saved) searchable index.
+    const f = collection.features
+    if (collection.output && f && (f.emailToPdf || f.internalIndex || f.externalIndex || f.highlights) && !cancelled.has(collectionId)) {
+      try {
+        collection.production = await buildProduction(collection, docs, emit, () => cancelled.has(collectionId))
+      } catch (e) {
+        collection.production = { pdfCount: 0, slipSheets: 0, errors: [{ file: '(production)', error: (e as Error).message }] }
+      }
+    }
+
     collection.status = 'ready'
     await saveCollection(collection)
     emit({ type: 'index-done', collectionId, fileCount: docs.length })
