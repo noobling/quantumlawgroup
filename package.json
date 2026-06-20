@@ -12,7 +12,8 @@
     "package:win": "electron-vite build && electron-packager . \"DeepSolve Legal\" --platform=win32 --arch=arm64 --out=app-build --overwrite --prune=true",
     "dist:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-dist.ps1",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node scripts/test-production-rows.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.1",
