@@ -200,10 +200,11 @@ function Toggle({
 }
 
 function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
-  const { createCollection } = useStore()
+  const { createCollection, settings } = useStore()
   const [name, setName] = useState('')
   const [folders, setFolders] = useState<string[]>([])
   const [output, setOutput] = useState('')
+  const [outputTouched, setOutputTouched] = useState(false)
   const [emailToPdf, setEmailToPdf] = useState(true)
   const [internalIndex, setInternalIndex] = useState(true)
   const [externalIndex, setExternalIndex] = useState(false)
@@ -217,16 +218,26 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const wantsOutput = emailToPdf || internalIndex || externalIndex || highlights
   const wantsBates = internalIndex || externalIndex || emailToPdf
 
+  // Default the output to the matter folder + the set name, so the user never
+  // has to open a picker. They can edit the text or Browse to override it.
+  const matterRoot = (settings?.matterRoot || '').replace(/[/\\]+$/, '')
+  const sep = matterRoot.includes('\\') ? '\\' : '/'
+  const defaultOutput = matterRoot ? `${matterRoot}${sep}${name.trim() || 'Untitled document set'}` : ''
+  const outputValue = outputTouched ? output : defaultOutput
+
   const pickInputs = async (): Promise<void> => {
     const picked = await window.api.library.pickFolders()
     if (picked.length) setFolders((f) => Array.from(new Set([...f, ...picked])))
   }
   const pickOutput = async (): Promise<void> => {
     const dir = await window.api.library.pickOutput()
-    if (dir) setOutput(dir)
+    if (dir) {
+      setOutput(dir)
+      setOutputTouched(true)
+    }
   }
 
-  const canCreate = folders.length > 0 && (!wantsOutput || !!output) && !busy
+  const canCreate = folders.length > 0 && (!wantsOutput || !!outputValue.trim()) && !busy
 
   const create = async (): Promise<void> => {
     if (!canCreate) return
@@ -235,7 +246,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
     await createCollection({
       name: name.trim() || 'Untitled document set',
       folders,
-      output: wantsOutput ? output : undefined,
+      output: wantsOutput ? outputValue.trim() || undefined : undefined,
       features,
       bates: wantsBates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : undefined,
       combineAttachments: combine,
@@ -304,13 +315,27 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
         {wantsOutput && (
           <>
             <label className="block mt-4 text-[13px] text-ink-600">Output folder (the deliverable bundle)</label>
-            <button
-              onClick={() => void pickOutput()}
-              className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-ink-600 text-sm text-slate-300 hover:border-accent hover:text-accent w-full justify-center"
-            >
-              <FolderInput className="w-4 h-4" /> {output ? 'Change output folder…' : 'Choose output folder…'}
-            </button>
-            {output && <div className="mt-1.5 text-[12px] text-slate-400 bg-ink-950 rounded px-2 py-1 truncate">{output}</div>}
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                value={outputValue}
+                onChange={(e) => {
+                  setOutput(e.target.value)
+                  setOutputTouched(true)
+                }}
+                placeholder="Choose or type an output folder…"
+                className="flex-1 min-w-0 rounded-lg bg-ink-950 border border-ink-700 px-3 py-2 text-[12.5px] text-slate-200 focus:border-accent outline-none"
+              />
+              <button
+                onClick={() => void pickOutput()}
+                title="Browse…"
+                className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg border border-ink-700 text-sm text-slate-300 hover:bg-ink-800"
+              >
+                <FolderInput className="w-4 h-4" /> Browse
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-ink-600">
+              Defaults to your matter folder + the set name. The bundle (PDFs, indexes, load file) is written here.
+            </p>
           </>
         )}
 

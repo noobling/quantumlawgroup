@@ -254,11 +254,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const now = Date.now()
     const id = 'col_' + now.toString(36) + Math.random().toString(36).slice(2, 6)
     const features = input.features
+    const name = input.name || 'Untitled document set'
+    // A set that produces a bundle needs an output folder. Default to the matter
+    // folder + the set name so the user never has to pick one.
+    const wantsOutput = !!features && (features.emailToPdf || features.internalIndex || features.externalIndex || features.highlights)
+    let output = input.output?.trim() || undefined
+    if (wantsOutput && !output) {
+      const settings = await getSettings()
+      output = path.join(settings.matterRoot, sanitize(name))
+    }
     const c: Collection = {
       id,
-      name: input.name || 'Untitled document set',
+      name,
       folders: input.folders,
-      output: input.output || undefined,
+      output,
       createdAt: now,
       updatedAt: now,
       fileCount: 0,
