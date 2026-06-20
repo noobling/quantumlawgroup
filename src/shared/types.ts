@@ -339,8 +339,14 @@ export interface ProcessFeatures {
 
 /** Artifacts the production pass writes under the output folder. */
 export interface ProductionResult {
-  /** Documents rendered to (Bates-stamped) PDF in the output folder. */
+  /** Documents in the production (rendered this run + reused unchanged). */
   pdfCount: number
+  /** Documents (re)rendered this run because they were new or changed. */
+  processed: number
+  /** Documents skipped this run — unchanged since the last run, reused as-is. */
+  skipped: number
+  /** Documents in the prior production that are no longer in the input. */
+  removed: number
   /** First/last Bates numbers across the production. */
   batesRange?: { begin: string; end: string }
   /** Review index spreadsheet (filename under the output folder) — internal. */

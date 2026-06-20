@@ -180,7 +180,7 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
       try {
         collection.production = await buildProduction(collection, docs, emit, () => cancelled.has(collectionId))
       } catch (e) {
-        collection.production = { pdfCount: 0, slipSheets: 0, errors: [{ file: '(production)', error: (e as Error).message }] }
+        collection.production = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, errors: [{ file: '(production)', error: (e as Error).message }] }
       }
     }
 

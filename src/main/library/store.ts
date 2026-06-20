@@ -71,6 +71,20 @@ export async function getLexical(id: string): Promise<LexicalIndex> {
   return readJson<LexicalIndex>(path.join(collPath(id), 'lexical.json'), createIndex())
 }
 
+/**
+ * The production manifest: one record per produced document (input stat + Bates +
+ * output path). Lets a re-run scan input-vs-output and skip unchanged documents
+ * instead of re-rendering everything. Stored separately so it doesn't bloat
+ * collection.json (which library:list reads for every collection).
+ */
+export async function getProductionManifest(id: string): Promise<unknown> {
+  return readJson<unknown>(path.join(collPath(id), 'production.json'), null)
+}
+
+export async function saveProductionManifest(id: string, data: unknown): Promise<void> {
+  await writeJson(path.join(collPath(id), 'production.json'), data)
+}
+
 export async function saveLexical(id: string, idx: LexicalIndex): Promise<void> {
   await writeJson(path.join(collPath(id), 'lexical.json'), idx)
 }

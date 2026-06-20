@@ -6,6 +6,7 @@ import { buildEmailHtml } from './emailHtml'
 import { combineFamily, makeRenderWindow, renderInto, safeName, stampBates, toCsv, toDat } from './emailToPdf'
 import { renderDocToPdf, slipSheet } from './docToPdf'
 import { rowsToXlsx } from './convert'
+import { getProductionManifest, saveProductionManifest } from '../library/store'
 import {
   HIGHLIGHT_HEADER,
   REVIEW_HEADER,
@@ -30,6 +31,14 @@ type Emit = (e: IndexEvent) => void
 const PAD = 6
 
 const addr = (v: ParsedMail['to']): string => (Array.isArray(v) ? v.map((t) => t.text).join('; ') : v?.text) || ''
+
+/** A produced document remembered across runs: its row data + input file state. */
+interface ProdItem extends ProdRecord {
+  id: string
+  path: string
+  mtime: number
+  size: number
+}
 
 /** A produced PDF + the metadata row it contributes to the indexes. */
 async function produceOne(
@@ -156,7 +165,7 @@ export async function buildProduction(
 ): Promise<ProductionResult> {
   const features = collection.features as ProcessFeatures
   const outRoot = path.resolve(collection.output as string)
-  const result: ProductionResult = { pdfCount: 0, slipSheets: 0, errors: [] }
+  const result: ProductionResult = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, errors: [] }
   await fs.mkdir(outRoot, { recursive: true })
 
   // A review index or production renders every doc; "email→PDF" alone renders just emails.
@@ -168,6 +177,7 @@ export async function buildProduction(
   const stampOn = !!bates
   const prefix = bates?.prefix ?? ''
   let batesNext = bates?.start ?? 1
+  const label = (n: number): string => prefix + String(n).padStart(PAD, '0')
 
   const inRoots = collection.folders.map((f) => path.resolve(f))
   const relFor = (p: string): string => {
@@ -175,18 +185,58 @@ export async function buildProduction(
     return root ? path.relative(root, p) : path.basename(p)
   }
 
+  // Scan input-vs-output: reuse documents that are unchanged AND would land on the
+  // same Bates number; only (re)render new/changed docs (or ones whose numbering
+  // shifted because something earlier in the sequence changed).
+  emit({ type: 'index-progress', collectionId: collection.id, phase: 'Checking for changes', done: 0, total: targets.length })
+  // Render options that change the output. If any differ from the last run, the
+  // cached PDFs are stale, so ignore the manifest and re-render everything.
+  const configKey = JSON.stringify({
+    combine: !!collection.combineAttachments,
+    excludeSignatures: !!collection.excludeSignatures,
+    bates: collection.bates ?? null,
+    emailToPdf: features.emailToPdf,
+    reviewIndex: features.reviewIndex,
+    loadFile: features.loadFile
+  })
+  const saved = (await getProductionManifest(collection.id)) as { config?: string; items?: ProdItem[] } | null
+  const prevManifest = saved && saved.config === configKey ? saved.items ?? [] : []
+  const prevById = new Map(prevManifest.map((p) => [p.id, p]))
+  const currentIds = new Set(targets.map((d) => d.id))
+  result.removed = prevManifest.filter((p) => !currentIds.has(p.id)).length
+  const outputExists = async (rel: string): Promise<boolean> => {
+    try {
+      await fs.stat(path.join(outRoot, rel))
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const used = new Set<string>()
-  const records: ProdRecord[] = []
+  const items: ProdItem[] = []
   const win = makeRenderWindow()
   try {
     for (let i = 0; i < targets.length; i++) {
       if (isCancelled()) break
       const doc = targets[i]
       emit({ type: 'index-progress', collectionId: collection.id, phase: 'Building production', done: i, total: targets.length })
+      const prev = prevById.get(doc.id)
+      const unchanged = !!prev && prev.mtime === doc.modifiedAt && prev.size === doc.size
+      const batesStable = !stampOn || (prev != null && prev.begBates === label(batesNext))
+      if (unchanged && prev && batesStable && (await outputExists(prev.fileRel))) {
+        items.push(prev) // reuse the already-produced PDF + its Bates
+        used.add(path.join(outRoot, prev.fileRel).toLowerCase())
+        batesNext += prev.pages
+        result.skipped++
+        result.pdfCount++
+        continue
+      }
       try {
         const rec = await produceOne(win, doc, outRoot, relFor(doc.path), { combine: !!collection.combineAttachments, stamp: stampOn, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures }, used, result)
-        records.push(rec)
+        items.push({ id: doc.id, path: doc.path, mtime: doc.modifiedAt, size: doc.size, ...rec })
         batesNext += rec.pages
+        result.processed++
         result.pdfCount++
       } catch (e) {
         result.errors.push({ file: doc.path, error: (e as Error).message })
@@ -196,7 +246,9 @@ export async function buildProduction(
     win.destroy()
   }
   emit({ type: 'index-progress', collectionId: collection.id, phase: 'Building production', done: targets.length, total: targets.length })
+  await saveProductionManifest(collection.id, { config: configKey, items })
 
+  const records: ProdRecord[] = items
   if (stampOn && records.length) {
     const first = records.find((r) => r.begBates)
     const last = [...records].reverse().find((r) => r.endBates)

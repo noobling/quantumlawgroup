@@ -294,10 +294,13 @@ function OutputsPanel({ c, indexing }: { c: CollectionType; indexing: boolean })
           </div>
         )}
 
-        {p && (p.slipSheets > 0 || p.errors.length > 0) && (
+        {p && !indexing && (
           <div className="mt-2.5 text-[11.5px] text-ink-600">
-            {p.slipSheets > 0 && <span>{p.slipSheets} slip-sheeted (native produced alongside). </span>}
-            {p.errors.length > 0 && <span className="text-amber-300/80">{p.errors.length} file{p.errors.length === 1 ? '' : 's'} could not be produced.</span>}
+            <span className="text-slate-300">{p.processed}</span> processed ·{' '}
+            <span className="text-slate-300">{p.skipped}</span> unchanged (reused)
+            {p.removed > 0 && <span> · {p.removed} removed from input</span>}
+            {p.slipSheets > 0 && <span> · {p.slipSheets} slip-sheeted</span>}
+            {p.errors.length > 0 && <span className="text-amber-300/80"> · {p.errors.length} failed</span>}
           </div>
         )}
       </div>
