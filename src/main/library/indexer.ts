@@ -20,10 +20,24 @@ import { buildProduction } from '../export/production'
 type Emit = (e: IndexEvent) => void
 
 const MAX_TEXT = 200_000
+// Hard stop (delete) vs. pause (resumable). Both break the loops; only `paused`
+// finalizes the collection as 'paused' so a later run resumes from saved state.
 const cancelled = new Set<string>()
+const paused = new Set<string>()
+// Ids with a run in flight — guards against a double resume/re-run for the same
+// set (which would clear each other's pause flag and render to the same files).
+const running = new Set<string>()
 
 export function cancelIndex(collectionId: string): void {
   cancelled.add(collectionId)
+}
+
+export function pauseIndex(collectionId: string): void {
+  paused.add(collectionId)
+}
+
+function stopped(collectionId: string): boolean {
+  return cancelled.has(collectionId) || paused.has(collectionId)
 }
 
 function docIdFor(p: string): string {
@@ -61,9 +75,13 @@ function indexableText(doc: IndexedDoc, body: string): string {
 }
 
 export async function buildIndex(collectionId: string, emit: Emit): Promise<void> {
+  if (running.has(collectionId)) return // a run is already in flight for this set
+  running.add(collectionId)
   cancelled.delete(collectionId)
+  paused.delete(collectionId)
   const collection = await getCollection(collectionId)
   if (!collection) {
+    running.delete(collectionId)
     emit({ type: 'index-error', collectionId, message: 'Collection not found.' })
     return
   }
@@ -122,7 +140,7 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
     let done = docs.length - pending.length
     const saveEvery = Math.max(5, Math.floor(pending.length / 20))
     for (const { doc, prevId } of pending) {
-      if (cancelled.has(collectionId)) break
+      if (stopped(collectionId)) break
       const ext = doc.ext
       let body = ''
       try {
@@ -165,7 +183,7 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
       if (!seen.has(prev.path)) removeDoc(lexical, prev.id)
     }
 
-    if (collection.aiEnrich && !cancelled.has(collectionId)) {
+    if (collection.aiEnrich && !stopped(collectionId)) {
       await enrich(collection, docs, lexical, emit)
     }
 
@@ -176,12 +194,21 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
     // enabled features. Best-effort relative to the index — a production failure
     // is recorded but doesn't poison the (already saved) searchable index.
     const f = collection.features
-    if (collection.output && f && (f.emailToPdf || f.reviewIndex || f.loadFile || f.highlights) && !cancelled.has(collectionId)) {
+    if (collection.output && f && (f.emailToPdf || f.reviewIndex || f.loadFile || f.highlights) && !stopped(collectionId)) {
       try {
-        collection.production = await buildProduction(collection, docs, emit, () => cancelled.has(collectionId))
+        collection.production = await buildProduction(collection, docs, emit, () => stopped(collectionId))
       } catch (e) {
         collection.production = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, errors: [{ file: '(production)', error: (e as Error).message }] }
       }
+    }
+
+    // Paused mid-run: keep the partial (saved) state and stop here so a later
+    // resume continues. Cancelled (delete) just falls through — the dir is removed.
+    if (paused.has(collectionId)) {
+      collection.status = 'paused'
+      await saveCollection(collection)
+      emit({ type: 'index-paused', collectionId })
+      return
     }
 
     collection.status = 'ready'
@@ -194,6 +221,8 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
     emit({ type: 'index-error', collectionId, message: (e as Error).message })
   } finally {
     cancelled.delete(collectionId)
+    paused.delete(collectionId)
+    running.delete(collectionId)
   }
 }
 
@@ -212,7 +241,7 @@ async function enrich(
   const batchSize = 5
   let done = 0
   for (let i = 0; i < pending.length; i += batchSize) {
-    if (cancelled.has(collection.id)) break
+    if (stopped(collection.id)) break
     const batch = pending.slice(i, i + batchSize)
     const payload = batch.map((d) => ({
       id: d.id,

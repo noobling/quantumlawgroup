@@ -35,7 +35,7 @@ import {
   listCollections,
   saveCollection
 } from './library/store'
-import { buildIndex, cancelIndex } from './library/indexer'
+import { buildIndex, cancelIndex, pauseIndex } from './library/indexer'
 import { searchCollection } from './library/search'
 import { extractText } from './library/extract'
 import { estimateTokens } from '@shared/pricing'
@@ -236,6 +236,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return deleteCollection(id)
   })
   ipcMain.handle('library:cancel', (_e, id: string) => cancelIndex(id))
+  ipcMain.handle('library:pause', (_e, id: string) => pauseIndex(id))
+  ipcMain.handle('library:resume', (_e, id: string) => {
+    void buildIndex(id, emitIndex)
+  })
   ipcMain.handle('library:reindex', (_e, id: string) => {
     void buildIndex(id, emitIndex)
   })

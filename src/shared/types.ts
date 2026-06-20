@@ -318,7 +318,7 @@ export interface EmailToPdfResult {
 
 // ---- Library / document index ----
 
-export type CollectionStatus = 'idle' | 'indexing' | 'ready' | 'error'
+export type CollectionStatus = 'idle' | 'indexing' | 'ready' | 'error' | 'paused'
 
 /**
  * Opt-in processors a document set can run. The input is always indexed (so it's
@@ -448,6 +448,7 @@ export interface CreateCollectionInput {
 export type IndexEvent =
   | { type: 'index-progress'; collectionId: string; phase: string; done: number; total: number }
   | { type: 'index-done'; collectionId: string; fileCount: number }
+  | { type: 'index-paused'; collectionId: string }
   | { type: 'index-error'; collectionId: string; message: string }
 
 // The typed surface exposed on window.api by the preload bridge.
@@ -492,6 +493,10 @@ export interface Api {
     delete: (id: string) => Promise<void>
     reindex: (id: string) => Promise<void>
     cancel: (id: string) => Promise<void>
+    /** Pause an in-flight run (resumable — keeps partial progress). */
+    pause: (id: string) => Promise<void>
+    /** Resume a paused run from where it left off. */
+    resume: (id: string) => Promise<void>
     search: (id: string, query: string) => Promise<LibrarySearchHit[]>
     exportIndex: (id: string, format: 'xlsx' | 'docx') => Promise<ExportResult>
     exportHighlights: (id: string, format: 'csv' | 'xlsx') => Promise<ExportResult>

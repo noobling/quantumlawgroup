@@ -18,11 +18,13 @@ import {
   FileSpreadsheet,
   Send,
   Highlighter,
-  Hash
+  Hash,
+  Pause,
+  Play
 } from 'lucide-react'
 
 export default function Library(): JSX.Element {
-  const { collections, indexProgress, openCollection, reindexCollection, deleteCollection } = useStore()
+  const { collections, indexProgress, openCollection, reindexCollection, deleteCollection, pauseCollection, resumeCollection } = useStore()
   const [showNew, setShowNew] = useState(false)
 
   return (
@@ -66,6 +68,8 @@ export default function Library(): JSX.Element {
               onOpen={() => void openCollection(c.id)}
               onReindex={() => void reindexCollection(c.id)}
               onDelete={() => void deleteCollection(c.id)}
+              onPause={() => void pauseCollection(c.id)}
+              onResume={() => void resumeCollection(c.id)}
             />
           ))}
         </div>
@@ -105,15 +109,20 @@ function CollectionCard({
   progress,
   onOpen,
   onReindex,
-  onDelete
+  onDelete,
+  onPause,
+  onResume
 }: {
   c: Collection
   progress?: { phase: string; done: number; total: number }
   onOpen: () => void
   onReindex: () => void
   onDelete: () => void
+  onPause: () => void
+  onResume: () => void
 }): JSX.Element {
   const indexing = c.status === 'indexing'
+  const isPaused = c.status === 'paused'
   const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0
   return (
     <div className="rounded-xl border border-ink-700/70 bg-ink-900/60 p-4 hover:border-ink-600 transition">
@@ -131,6 +140,11 @@ function CollectionCard({
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
               {progress ? `${progress.phase}… ${progress.done}/${progress.total}` : 'Processing…'}
             </span>
+          ) : isPaused ? (
+            <span className="text-amber-300 flex items-center gap-1.5">
+              <Pause className="w-3.5 h-3.5" /> Paused
+              {c.production ? ` · ${c.production.pdfCount} produced` : ''}
+            </span>
           ) : c.status === 'error' ? (
             <span className="text-red-400">Error: {c.error}</span>
           ) : (
@@ -147,7 +161,17 @@ function CollectionCard({
           )}
         </div>
         <div className="flex items-center gap-1">
-          {!indexing && (
+          {indexing && (
+            <button onClick={onPause} title="Pause" className="p-1.5 rounded text-ink-600 hover:text-amber-300 hover:bg-ink-800">
+              <Pause className="w-4 h-4" />
+            </button>
+          )}
+          {isPaused && (
+            <button onClick={onResume} className="flex items-center gap-1 px-2 py-1 rounded text-[12px] text-accent border border-accent/40 hover:bg-accent/10">
+              <Play className="w-3.5 h-3.5" /> Resume
+            </button>
+          )}
+          {!indexing && !isPaused && (
             <>
               <button onClick={onOpen} title="Open" className="p-1.5 rounded text-ink-600 hover:text-slate-200 hover:bg-ink-800">
                 <FolderOpen className="w-4 h-4" />

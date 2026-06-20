@@ -246,7 +246,11 @@ export async function buildProduction(
     win.destroy()
   }
   emit({ type: 'index-progress', collectionId: collection.id, phase: 'Building production', done: targets.length, total: targets.length })
+  // Persist the manifest (full or partial) so a paused run resumes from here.
   await saveProductionManifest(collection.id, { config: configKey, items })
+  // Paused/cancelled mid-render: leave the index/load-file regeneration for the
+  // resume run (when the full set is produced).
+  if (isCancelled()) return result
 
   const records: ProdRecord[] = items
   if (stampOn && records.length) {

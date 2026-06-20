@@ -14,7 +14,9 @@ import {
   Highlighter,
   FolderOpen,
   Send,
-  FileStack
+  FileStack,
+  Pause,
+  Play
 } from 'lucide-react'
 
 type Col = { key: keyof IndexedDoc; label: string }
@@ -28,6 +30,8 @@ export default function Collection(): JSX.Element {
     clearSearch,
     exportIndex,
     reindexCollection,
+    pauseCollection,
+    resumeCollection,
     setRoute
   } = useStore()
   const openHighlights = (): void => setRoute('highlights')
@@ -38,6 +42,7 @@ export default function Collection(): JSX.Element {
 
   const c = collectionDetail
   const indexing = c?.status === 'indexing' || !!(c && indexProgress[c.id])
+  const isPaused = c?.status === 'paused'
 
   const hasEmail = useMemo(() => (c?.docs ?? []).some((d) => d.kind === 'email'), [c])
   const hasSummary = useMemo(() => (c?.docs ?? []).some((d) => d.summary), [c])
@@ -108,7 +113,7 @@ export default function Collection(): JSX.Element {
         <div className="min-w-0">
           <div className="text-[14px] font-medium text-slate-100 truncate">{c.name}</div>
           <div className="text-[11px] text-ink-600">
-            {c.fileCount} documents{indexing ? ' · processing…' : ''}
+            {c.fileCount} documents{indexing ? ' · processing…' : isPaused ? ' · paused' : ''}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -120,13 +125,30 @@ export default function Collection(): JSX.Element {
               <Highlighter className="w-4 h-4" /> Highlights
             </button>
           )}
-          <button
-            onClick={() => void reindexCollection(c.id)}
-            disabled={indexing}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-40"
-          >
-            {indexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Re-run
-          </button>
+          {indexing && (
+            <button
+              onClick={() => void pauseCollection(c.id)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+            >
+              <Pause className="w-4 h-4" /> Pause
+            </button>
+          )}
+          {isPaused && (
+            <button
+              onClick={() => void resumeCollection(c.id)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] bg-accent text-ink-950 font-medium hover:bg-accent-soft"
+            >
+              <Play className="w-4 h-4" /> Resume
+            </button>
+          )}
+          {!indexing && !isPaused && (
+            <button
+              onClick={() => void reindexCollection(c.id)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] border border-ink-700 text-slate-300 hover:bg-ink-800"
+            >
+              <RefreshCw className="w-4 h-4" /> Re-run
+            </button>
+          )}
           <button
             onClick={() => void exportIndex('xlsx')}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12.5px] border border-ink-700 text-slate-300 hover:bg-ink-800"
@@ -142,7 +164,7 @@ export default function Collection(): JSX.Element {
         </div>
       </header>
 
-      {c.output && <OutputsPanel c={c} indexing={indexing} />}
+      {c.output && <OutputsPanel c={c} indexing={indexing} paused={isPaused} />}
 
       <div className="px-5 pt-3 pb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-ink-600">
         <FileStack className="w-3.5 h-3.5" /> Input documents
@@ -233,7 +255,7 @@ export default function Collection(): JSX.Element {
 }
 
 /** The production bundle — prioritized above the input documents. */
-function OutputsPanel({ c, indexing }: { c: CollectionType; indexing: boolean }): JSX.Element {
+function OutputsPanel({ c, indexing, paused }: { c: CollectionType; indexing: boolean; paused: boolean }): JSX.Element {
   const p = c.production
   const reveal = (path: string): void => void window.api.files.reveal(path)
   // Show the folder + filename (e.g. "Reports/Review Index.xlsx") so the layout is clear.
@@ -268,12 +290,17 @@ function OutputsPanel({ c, indexing }: { c: CollectionType; indexing: boolean })
         </div>
         <div className="mt-1 text-[12px] text-ink-600 truncate" title={c.output}>{c.output}</div>
 
+        {paused && (
+          <div className="mt-3 text-[12.5px] text-amber-300 flex items-center gap-1.5">
+            <Pause className="w-3.5 h-3.5" /> Paused{shown.length > 0 ? ` at ${p?.pdfCount ?? 0} produced` : ''} — Resume to finish.
+          </div>
+        )}
         {indexing ? (
           <div className="mt-3 text-[12.5px] text-accent flex items-center gap-1.5">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Building the production…
           </div>
         ) : shown.length === 0 ? (
-          <div className="mt-3 text-[12.5px] text-ink-600">No artifacts produced yet — re-run to build them.</div>
+          !paused && <div className="mt-3 text-[12.5px] text-ink-600">No artifacts produced yet — re-run to build them.</div>
         ) : (
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
             {shown.map((a) => (

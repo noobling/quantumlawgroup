@@ -26,6 +26,17 @@ let unsubscribers: Array<() => void> = []
 /** Throttle for streaming the open set's docs in while it indexes. */
 let lastDetailRefresh = 0
 
+/** Optimistically flip a set (and the open detail) to 'indexing' on re-run/resume,
+ *  so the Pause/Resume buttons switch immediately instead of after the first event. */
+function markIndexing(get: () => AppState, set: (partial: Partial<AppState>) => void, id: string): void {
+  const { collections, currentCollectionId, collectionDetail } = get()
+  set({
+    collections: collections.map((c) => (c.id === id ? { ...c, status: 'indexing' } : c)),
+    collectionDetail:
+      currentCollectionId === id && collectionDetail ? { ...collectionDetail, status: 'indexing' } : collectionDetail
+  })
+}
+
 /**
  * Whether the active provider is ready to run a workflow. For Anthropic that
  * means an API key is saved (`keyPresent`); for the local provider it means a
@@ -119,6 +130,8 @@ interface AppState {
   createCollection: (input: CreateCollectionInput) => Promise<void>
   deleteCollection: (id: string) => Promise<void>
   reindexCollection: (id: string) => Promise<void>
+  pauseCollection: (id: string) => Promise<void>
+  resumeCollection: (id: string) => Promise<void>
   openCollection: (id: string) => Promise<void>
   searchCollection: (query: string) => Promise<void>
   clearSearch: () => void
@@ -293,9 +306,15 @@ export const useStore = create<AppState>((set, get) => ({
   },
   async reindexCollection(id) {
     await window.api.library.reindex(id)
-    set({
-      collections: get().collections.map((c) => (c.id === id ? { ...c, status: 'indexing' } : c))
-    })
+    markIndexing(get, set, id)
+  },
+  async pauseCollection(id) {
+    // Status flips to 'paused' when the run actually stops (index-paused event).
+    await window.api.library.pause(id)
+  },
+  async resumeCollection(id) {
+    await window.api.library.resume(id)
+    markIndexing(get, set, id)
   },
   async openCollection(id) {
     const detail = await window.api.library.get(id)
@@ -337,6 +356,13 @@ export const useStore = create<AppState>((set, get) => ({
         })
       }
     } else if (e.type === 'index-done') {
+      delete ip[e.collectionId]
+      set({ indexProgress: ip })
+      void get().refreshCollections()
+      if (get().currentCollectionId === e.collectionId) {
+        void window.api.library.get(e.collectionId).then((detail) => set({ collectionDetail: detail }))
+      }
+    } else if (e.type === 'index-paused') {
       delete ip[e.collectionId]
       set({ indexProgress: ip })
       void get().refreshCollections()
