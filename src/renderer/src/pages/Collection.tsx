@@ -37,7 +37,7 @@ export default function Collection(): JSX.Element {
   const [sortDir, setSortDir] = useState<1 | -1>(-1)
 
   const c = collectionDetail
-  const indexing = !!(c && indexProgress[c.id])
+  const indexing = c?.status === 'indexing' || !!(c && indexProgress[c.id])
 
   const hasEmail = useMemo(() => (c?.docs ?? []).some((d) => d.kind === 'email'), [c])
   const hasSummary = useMemo(() => (c?.docs ?? []).some((d) => d.summary), [c])
@@ -153,8 +153,9 @@ export default function Collection(): JSX.Element {
           <input
             value={query}
             onChange={(e) => runSearch(e.target.value)}
-            placeholder="Search the indexed documents…"
-            className="w-full rounded-lg bg-ink-950 border border-ink-700 pl-9 pr-9 py-2 text-sm text-slate-100 focus:border-accent outline-none"
+            disabled={indexing}
+            placeholder={indexing ? 'Search available once processing finishes…' : 'Search the indexed documents…'}
+            className="w-full rounded-lg bg-ink-950 border border-ink-700 pl-9 pr-9 py-2 text-sm text-slate-100 focus:border-accent outline-none disabled:opacity-60"
           />
           {query && (
             <button
@@ -193,20 +194,26 @@ export default function Collection(): JSX.Element {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={columns.length + 1} className="px-3 py-10 text-center text-ink-600">
-                  {searchHits ? 'No matches.' : indexing ? 'Indexing…' : 'No documents indexed.'}
+                  {searchHits ? 'No matches.' : indexing ? 'Reading documents…' : 'No documents indexed.'}
                 </td>
               </tr>
             )}
             {rows.map((d) => (
               <tr key={d.id} className="border-b border-ink-800/60 hover:bg-ink-800/40 align-top">
-                {columns.map((col) => (
-                  <td key={String(col.key)} className="px-3 py-2 text-slate-300">
-                    <div className="line-clamp-2 max-w-[22rem]">{String(d[col.key] ?? '')}</div>
-                    {col.key === (hasEmail ? 'subject' : 'name') && snippetById.get(d.id) && (
-                      <div className="text-[11px] text-ink-600 italic mt-0.5 line-clamp-2">…{snippetById.get(d.id)}…</div>
-                    )}
-                  </td>
-                ))}
+                {columns.map((col) => {
+                  // The primary column falls back to the filename, so rows are
+                  // readable the instant they appear — before metadata is parsed.
+                  const isPrimary = col.key === (hasEmail ? 'subject' : 'name')
+                  const display = String(d[col.key] ?? '') || (isPrimary ? d.name : '')
+                  return (
+                    <td key={String(col.key)} className="px-3 py-2 text-slate-300">
+                      <div className="line-clamp-2 max-w-[22rem]">{display}</div>
+                      {isPrimary && snippetById.get(d.id) && (
+                        <div className="text-[11px] text-ink-600 italic mt-0.5 line-clamp-2">…{snippetById.get(d.id)}…</div>
+                      )}
+                    </td>
+                  )
+                })}
                 <td className="px-3 py-2 text-right">
                   <button
                     onClick={() => void window.api.files.reveal(d.path)}

@@ -78,56 +78,64 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
     const prevByPath = new Map(prevDocs.map((d) => [d.path, d]))
     const lexical = await getLexical(collectionId)
 
+    // Pass 1 — build the full document list up front (reuse unchanged docs, make a
+    // lightweight skeleton for the rest) and save it immediately, so the set is
+    // browsable the moment the folder walk finishes. Content fills in after.
     const docs: IndexedDoc[] = []
     const seen = new Set<string>()
-    let done = 0
-
+    const pending: { doc: IndexedDoc; prevId?: string }[] = []
     for (const file of files) {
-      if (cancelled.has(collectionId)) break
       seen.add(file)
-      done++
-      emit({ type: 'index-progress', collectionId, phase: 'Reading documents', done, total: files.length })
-
       let stat: import('fs').Stats
       try {
         stat = await fs.stat(file)
       } catch {
         continue
       }
-
       const prev = prevByPath.get(file)
       if (prev && prev.modifiedAt === stat.mtimeMs && prev.size === stat.size && prev.textChars > 0) {
-        // Unchanged — reuse its record and existing lexical postings.
-        docs.push(prev)
+        docs.push(prev) // already indexed — keep its content + lexical postings
         continue
       }
-
       const ext = path.extname(file).toLowerCase()
-      const id = docIdFor(file)
       const doc: IndexedDoc = {
-        id,
+        id: docIdFor(file),
         path: file,
         name: path.basename(file),
         ext,
         size: stat.size,
         modifiedAt: stat.mtimeMs,
         kind: ext === '.eml' ? 'email' : 'doc',
-        textChars: 0
+        textChars: 0,
+        title: ext === '.eml' ? undefined : path.basename(file, ext)
       }
+      docs.push(doc)
+      pending.push({ doc, prevId: prev?.id })
+    }
+    collection.fileCount = docs.length
+    await saveCollection(collection)
+    await saveDocs(collectionId, docs) // <- the whole list is now browsable
+    emit({ type: 'index-progress', collectionId, phase: 'Reading documents', done: docs.length - pending.length, total: docs.length })
 
+    // Pass 2 — extract text / parse / highlights for the new docs, streaming
+    // progress and re-saving periodically so the list fills in as it goes.
+    let done = docs.length - pending.length
+    const saveEvery = Math.max(5, Math.floor(pending.length / 20))
+    for (const { doc, prevId } of pending) {
+      if (cancelled.has(collectionId)) break
+      const ext = doc.ext
       let body = ''
       try {
         if (ext === '.eml') {
-          const m = await parseEmlFile(file)
+          const m = await parseEmlFile(doc.path)
           doc.from = m.from
           doc.to = m.to
           doc.date = m.date
           doc.subject = m.subject
           body = m.body
         } else {
-          const { text } = await extractText(file)
+          const { text } = await extractText(doc.path)
           body = text
-          doc.title = path.basename(file, ext)
         }
       } catch {
         body = ''
@@ -138,16 +146,18 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
       // Pull reviewer highlights from Word/PDF so they're stored + searchable.
       if (ext === '.docx' || ext === '.pdf') {
         try {
-          const hl = await extractHighlights(file)
+          const hl = await extractHighlights(doc.path)
           if (hl.length) doc.highlights = hl
         } catch {
           /* highlights are best-effort */
         }
       }
 
-      if (prev) removeDoc(lexical, prev.id)
-      addDoc(lexical, id, indexableText(doc, body))
-      docs.push(doc)
+      if (prevId) removeDoc(lexical, prevId)
+      addDoc(lexical, doc.id, indexableText(doc, body))
+      done++
+      if (done % saveEvery === 0) await saveDocs(collectionId, docs)
+      emit({ type: 'index-progress', collectionId, phase: 'Reading documents', done, total: docs.length })
     }
 
     // Drop docs whose files disappeared.
@@ -161,7 +171,6 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
 
     await saveLexical(collectionId, lexical)
     await saveDocs(collectionId, docs)
-    collection.fileCount = docs.length
 
     // Production pass: render + index the set into the output folder, per the
     // enabled features. Best-effort relative to the index — a production failure

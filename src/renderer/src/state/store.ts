@@ -23,6 +23,9 @@ export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collec
  */
 let unsubscribers: Array<() => void> = []
 
+/** Throttle for streaming the open set's docs in while it indexes. */
+let lastDetailRefresh = 0
+
 /**
  * Whether the active provider is ready to run a workflow. For Anthropic that
  * means an API key is saved (`keyPresent`); for the local provider it means a
@@ -278,6 +281,8 @@ export const useStore = create<AppState>((set, get) => ({
   async createCollection(input) {
     const c = await window.api.library.create(input)
     set({ collections: [c, ...get().collections] })
+    // Jump straight into the set so you can browse the documents as they process.
+    await get().openCollection(c.id)
   },
   async deleteCollection(id) {
     await window.api.library.delete(id)
@@ -324,6 +329,13 @@ export const useStore = create<AppState>((set, get) => ({
     if (e.type === 'index-progress') {
       ip[e.collectionId] = { phase: e.phase, done: e.done, total: e.total }
       set({ indexProgress: ip })
+      // Stream freshly-indexed docs into the open set (throttled) so the list fills in live.
+      if (get().currentCollectionId === e.collectionId && Date.now() - lastDetailRefresh > 900) {
+        lastDetailRefresh = Date.now()
+        void window.api.library.get(e.collectionId).then((detail) => {
+          if (detail && get().currentCollectionId === e.collectionId) set({ collectionDetail: detail })
+        })
+      }
     } else if (e.type === 'index-done') {
       delete ip[e.collectionId]
       set({ indexProgress: ip })
