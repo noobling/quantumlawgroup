@@ -4,12 +4,19 @@ import path from 'path'
 import type {
   AgentEvent,
   Collection,
+  CollectionDetail,
   CreateCollectionInput,
+  DirEntry,
   ExportInput,
   ExportResult,
+  FilePreview,
+  ImportRulesResult,
   IndexedDoc,
   IndexEvent,
+  PreviewKind,
   PermissionDecision,
+  ProcessFeatures,
+  ProcessingRules,
   SendMessageInput,
   Settings,
   StartThreadInput
@@ -22,6 +29,16 @@ import {
   setSettings
 } from './storage/store'
 import { clearApiKey, hasApiKey, setApiKey } from './secureKey'
+
+/** Record (and prune) the display path for a "just this file" keep/exclude rule. The
+ *  map is keyed by fingerprint and only kept for fingerprints still in a rule list. */
+function mergeAttachmentPath(c: Collection, record?: { fp: string; path: string }): void {
+  const map = { ...(c.attachmentPaths ?? {}) }
+  if (record && record.fp && record.path) map[record.fp] = record.path
+  const live = new Set([...(c.keepAttachments ?? []), ...(c.excludeFingerprints ?? [])])
+  for (const k of Object.keys(map)) if (!live.has(k)) delete map[k]
+  c.attachmentPaths = map
+}
 import { getProvider } from './agent/provider'
 import { createOllamaProvider } from './agent/ollama'
 import { cancel, sendMessage, startThread } from './agent/runAgent'
@@ -30,6 +47,7 @@ import { markdownToDocx, markdownToPdf, markdownToXlsx, markdownToTrackedDocx, r
 import { getDocument } from './storage/store'
 import {
   deleteCollection,
+  getCollection,
   getCollectionDetail,
   getDocs,
   listCollections,
@@ -176,6 +194,81 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('files:reveal', (_e, p: string) => {
     shell.showItemInFolder(p)
   })
+  // List a directory's immediate children (dirs first, then files; both A→Z).
+  ipcMain.handle('files:listDir', async (_e, dir: string): Promise<DirEntry[]> => {
+    let ents: import('fs').Dirent[]
+    try {
+      ents = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    const out: DirEntry[] = []
+    for (const ent of ents) {
+      if (ent.name.startsWith('.')) continue // skip dotfiles (.DS_Store etc.)
+      const full = path.join(dir, ent.name)
+      const isDir = ent.isDirectory()
+      let size = 0
+      if (!isDir) {
+        try {
+          size = (await fs.stat(full)).size
+        } catch {
+          /* unreadable — leave 0 */
+        }
+      }
+      out.push({ name: ent.name, path: full, isDir, size, ext: isDir ? '' : path.extname(ent.name).toLowerCase() })
+    }
+    out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
+    return out
+  })
+  // Lightweight type/size probe for a path (used to render source roots as
+  // either a folder or a single file in the explorer).
+  ipcMain.handle('files:stat', async (_e, p: string): Promise<{ isDir: boolean; size: number } | null> => {
+    try {
+      const s = await fs.stat(p)
+      return { isDir: s.isDirectory(), size: s.isDirectory() ? 0 : s.size }
+    } catch {
+      return null
+    }
+  })
+  // Render a Microsoft Office document (docx/xlsx/pptx) to an HTML fragment for
+  // inline preview (Office formats have no native viewer in Electron).
+  ipcMain.handle('files:renderOffice', async (_e, p: string): Promise<{ ok: boolean; html?: string; error?: string }> => {
+    const { renderOfficeHtml } = await import('./library/officeHtml')
+    return renderOfficeHtml(p)
+  })
+  // Read a file for inline preview. PDFs/images come back base64, text as utf8.
+  // Anything bigger than the cap (or an unknown type) is left for Reveal in Explorer.
+  ipcMain.handle('files:read', async (_e, p: string): Promise<FilePreview> => {
+    const CAP = 25 * 1024 * 1024 // 25 MB — beyond this, previewing in-renderer is wasteful
+    const ext = path.extname(p).toLowerCase()
+    const imageMime: Record<string, string> = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.bmp': 'image/bmp',
+      '.svg': 'image/svg+xml'
+    }
+    const textExts = new Set(['.txt', '.md', '.csv', '.json', '.log', '.xml', '.html', '.htm', '.eml', '.rtf', '.tsv', '.yml', '.yaml'])
+    const kind: PreviewKind = ext === '.pdf' ? 'pdf' : imageMime[ext] ? 'image' : textExts.has(ext) ? 'text' : 'unsupported'
+    let size = 0
+    try {
+      size = (await fs.stat(p)).size
+    } catch (e) {
+      return { ok: false, kind, mime: '', size: 0, data: '', error: (e as Error).message }
+    }
+    if (kind === 'unsupported') return { ok: true, kind, mime: '', size, data: '' }
+    if (size > CAP) return { ok: true, kind, mime: '', size, data: '', tooLarge: true }
+    try {
+      const buf = await fs.readFile(p)
+      if (kind === 'text') return { ok: true, kind, mime: 'text/plain', size, data: buf.toString('utf8') }
+      const mime = kind === 'pdf' ? 'application/pdf' : imageMime[ext]
+      return { ok: true, kind, mime, size, data: buf.toString('base64') }
+    } catch (e) {
+      return { ok: false, kind, mime: '', size, data: '', error: (e as Error).message }
+    }
+  })
   // Estimate the prompt-token cost of attaching these documents (extract text, ~4 chars/token).
   ipcMain.handle('files:estimateTokens', async (_e, paths: string[]): Promise<number> => {
     let tokens = 0
@@ -244,10 +337,168 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     void buildIndex(id, emitIndex)
   })
   ipcMain.handle('library:search', (_e, id: string, query: string) => searchCollection(id, query, 100))
+  // Replace the excluded-attachment filename list. Persisted now; applied on the
+  // next re-run (the production reads collection.excludeAttachments).
+  ipcMain.handle('library:setExcluded', async (_e, id: string, names: string[]): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    const clean = Array.from(new Set((names ?? []).map((s) => s.trim()).filter(Boolean)))
+    c.excludeAttachments = clean
+    await saveCollection(c)
+    return getCollectionDetail(id)
+  })
+  // Replace the restored-attachment fingerprint list (name|size). Persisted now;
+  // applied on the next re-run (these attachments are never excluded again).
+  ipcMain.handle('library:setKept', async (_e, id: string, fingerprints: string[], record?: { fp: string; path: string }): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    c.keepAttachments = Array.from(new Set((fingerprints ?? []).map((s) => s.trim()).filter(Boolean)))
+    mergeAttachmentPath(c, record)
+    await saveCollection(c)
+    return getCollectionDetail(id)
+  })
+  // Replace the per-file exclude list (name|size fingerprints) — "exclude just this file".
+  ipcMain.handle('library:setExcludedFps', async (_e, id: string, fingerprints: string[], record?: { fp: string; path: string }): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    c.excludeFingerprints = Array.from(new Set((fingerprints ?? []).map((s) => s.trim()).filter(Boolean)))
+    mergeAttachmentPath(c, record)
+    await saveCollection(c)
+    return getCollectionDetail(id)
+  })
+  // Replace the keep-by-name list — "keep all of this name" (overrides exclusion).
+  ipcMain.handle('library:setKeptNames', async (_e, id: string, names: string[]): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    c.keepNames = Array.from(new Set((names ?? []).map((s) => s.trim()).filter(Boolean)))
+    await saveCollection(c)
+    return getCollectionDetail(id)
+  })
+  // Change which deliverables this set produces (review index, load file, highlights,
+  // AI summaries, PDF conversion). Persisted now; the next re-run produces the newly
+  // enabled outputs. Adding a report-only output (review index / load file / highlights)
+  // doesn't re-render PDFs — only the render-scope flags are in the production configKey.
+  ipcMain.handle('library:setFeatures', async (_e, id: string, features: ProcessFeatures): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    c.features = features
+    await saveCollection(c)
+    return getCollectionDetail(id)
+  })
+
+  // Export this set's processing rules (deliverables, Bates, attachment handling, and
+  // the hand-curated exclude/keep lists) to a portable `.dslrules.json` file, so they
+  // can be reused on another set instead of rebuilt by hand.
+  ipcMain.handle('library:exportRules', async (_e, id: string): Promise<ExportResult> => {
+    try {
+      const c = await getCollection(id)
+      if (!c) return { ok: false, error: 'Collection not found.' }
+      const rules: ProcessingRules = {
+        version: 1,
+        exportedFrom: c.name,
+        exportedAt: Date.now(),
+        features: c.features,
+        bates: c.bates ?? null,
+        combineAttachments: !!c.combineAttachments,
+        excludeSignatures: !!c.excludeSignatures,
+        excludeAttachments: c.excludeAttachments ?? [],
+        excludeFingerprints: c.excludeFingerprints ?? [],
+        keepAttachments: c.keepAttachments ?? [],
+        keepNames: c.keepNames ?? [],
+        attachmentPaths: c.attachmentPaths ?? {}
+      }
+      const win = getWindow()
+      const res = await dialog.showSaveDialog(win!, {
+        title: 'Export processing rules',
+        defaultPath: `${sanitize(c.name)} rules.dslrules.json`,
+        filters: [{ name: 'DeepSolve rules', extensions: ['dslrules.json', 'json'] }]
+      })
+      if (res.canceled || !res.filePath) return { ok: false, error: 'Cancelled.' }
+      await fs.writeFile(res.filePath, JSON.stringify(rules, null, 2), 'utf8')
+      shell.showItemInFolder(res.filePath)
+      return { ok: true, path: res.filePath }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message }
+    }
+  })
+
+  // Import a `.dslrules.json` file into this set: replace the processing rules with the
+  // ones in the file. Only fields present in the file are applied, so an older file
+  // missing (say) `features` leaves the set's deliverables untouched. The source set's
+  // folders/output/name are never touched. Applied now; takes effect on the next re-run.
+  ipcMain.handle('library:importRules', async (_e, id: string): Promise<ImportRulesResult> => {
+    const win = getWindow()
+    const c = await getCollection(id)
+    if (!c) return { ok: false, error: 'Collection not found.' }
+    const res = await dialog.showOpenDialog(win!, {
+      title: 'Import processing rules',
+      properties: ['openFile'],
+      filters: [{ name: 'DeepSolve rules', extensions: ['dslrules.json', 'json'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return { ok: false, cancelled: true }
+    let rules: ProcessingRules
+    try {
+      rules = JSON.parse(await fs.readFile(res.filePaths[0], 'utf8'))
+    } catch {
+      const error = "That file isn't valid JSON, so it can't be a rules file."
+      await dialog.showMessageBox(win!, { type: 'error', message: 'Import failed', detail: error })
+      return { ok: false, error }
+    }
+    if (!rules || typeof rules !== 'object' || rules.version !== 1) {
+      const error = 'This file is not a DeepSolve rules file (version 1).'
+      await dialog.showMessageBox(win!, { type: 'error', message: 'Import failed', detail: error })
+      return { ok: false, error }
+    }
+    const strList = (v: unknown): string[] =>
+      Array.isArray(v) ? Array.from(new Set(v.map((s) => String(s).trim()).filter(Boolean))) : []
+    // Apply each field only if the file carries it (so partial/older files don't wipe
+    // settings they don't know about).
+    if (rules.features) {
+      c.features = rules.features
+      c.aiEnrich = !!rules.features.aiEnrich
+    }
+    if ('bates' in rules) c.bates = rules.bates ?? undefined
+    if ('combineAttachments' in rules) c.combineAttachments = !!rules.combineAttachments
+    if ('excludeSignatures' in rules) c.excludeSignatures = !!rules.excludeSignatures
+    if ('excludeAttachments' in rules) c.excludeAttachments = strList(rules.excludeAttachments)
+    if ('excludeFingerprints' in rules) c.excludeFingerprints = strList(rules.excludeFingerprints)
+    if ('keepAttachments' in rules) c.keepAttachments = strList(rules.keepAttachments)
+    if ('keepNames' in rules) c.keepNames = strList(rules.keepNames)
+    if (rules.attachmentPaths && typeof rules.attachmentPaths === 'object') {
+      // Keep only paths that still pair with a live fingerprint rule.
+      const live = new Set([...(c.keepAttachments ?? []), ...(c.excludeFingerprints ?? [])])
+      c.attachmentPaths = Object.fromEntries(
+        Object.entries(rules.attachmentPaths).filter(([fp]) => live.has(fp))
+      )
+    }
+    await saveCollection(c)
+    const ruleCount =
+      (c.excludeAttachments?.length ?? 0) +
+      (c.excludeFingerprints?.length ?? 0) +
+      (c.keepAttachments?.length ?? 0) +
+      (c.keepNames?.length ?? 0)
+    return { ok: true, detail: await getCollectionDetail(id), ruleCount }
+  })
   ipcMain.handle('library:pickFolders', async () => {
     const win = getWindow()
     const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'multiSelections'] })
     return res.canceled ? [] : res.filePaths
+  })
+  // Pick source inputs: folders AND/OR individual files (macOS shows one dialog
+  // that allows both). Used to add more sources to an existing set.
+  ipcMain.handle('library:pickSources', async () => {
+    const win = getWindow()
+    const res = await dialog.showOpenDialog(win!, { properties: ['openFile', 'openDirectory', 'multiSelections'] })
+    return res.canceled ? [] : res.filePaths
+  })
+  // Append source paths (folders or files) to a set; applied on the next re-run.
+  ipcMain.handle('library:addSources', async (_e, id: string, paths: string[]): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    const add = (paths ?? []).map((p) => p.trim()).filter(Boolean)
+    c.folders = Array.from(new Set([...c.folders, ...add]))
+    await saveCollection(c)
+    return getCollectionDetail(id)
   })
   ipcMain.handle('library:pickOutput', async (): Promise<string | null> => {
     const win = getWindow()
@@ -281,7 +532,6 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       combineAttachments: input.combineAttachments,
       excludeSignatures: input.excludeSignatures,
       excludeAttachments: input.excludeAttachments,
-      excludeAttachmentsUnderKb: input.excludeAttachmentsUnderKb,
       aiEnrich: !!(input.aiEnrich || features?.aiEnrich)
     }
     await saveCollection(c)

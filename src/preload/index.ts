@@ -6,6 +6,7 @@ import type {
   ExportInput,
   IndexEvent,
   PermissionDecision,
+  ProcessFeatures,
   SendMessageInput,
   Settings,
   StartThreadInput
@@ -48,7 +49,11 @@ const api: Api = {
   files: {
     pick: () => ipcRenderer.invoke('files:pick'),
     reveal: (p: string) => ipcRenderer.invoke('files:reveal', p),
-    estimateTokens: (paths: string[]) => ipcRenderer.invoke('files:estimateTokens', paths)
+    estimateTokens: (paths: string[]) => ipcRenderer.invoke('files:estimateTokens', paths),
+    listDir: (p: string) => ipcRenderer.invoke('files:listDir', p),
+    read: (p: string) => ipcRenderer.invoke('files:read', p),
+    renderOffice: (p: string) => ipcRenderer.invoke('files:renderOffice', p),
+    stat: (p: string) => ipcRenderer.invoke('files:stat', p)
   },
   library: {
     list: () => ipcRenderer.invoke('library:list'),
@@ -63,6 +68,17 @@ const api: Api = {
     exportIndex: (id: string, format: 'xlsx' | 'docx') => ipcRenderer.invoke('library:export', id, format),
     exportHighlights: (id: string, format: 'csv' | 'xlsx') =>
       ipcRenderer.invoke('library:exportHighlights', id, format),
+    setExcluded: (id: string, names: string[]) => ipcRenderer.invoke('library:setExcluded', id, names),
+    setKept: (id: string, fingerprints: string[], record?: { fp: string; path: string }) =>
+      ipcRenderer.invoke('library:setKept', id, fingerprints, record),
+    setExcludedFps: (id: string, fingerprints: string[], record?: { fp: string; path: string }) =>
+      ipcRenderer.invoke('library:setExcludedFps', id, fingerprints, record),
+    setKeptNames: (id: string, names: string[]) => ipcRenderer.invoke('library:setKeptNames', id, names),
+    setFeatures: (id: string, features: ProcessFeatures) => ipcRenderer.invoke('library:setFeatures', id, features),
+    exportRules: (id: string) => ipcRenderer.invoke('library:exportRules', id),
+    importRules: (id: string) => ipcRenderer.invoke('library:importRules', id),
+    pickSources: () => ipcRenderer.invoke('library:pickSources'),
+    addSources: (id: string, paths: string[]) => ipcRenderer.invoke('library:addSources', id, paths),
     pickFolders: () => ipcRenderer.invoke('library:pickFolders'),
     pickOutput: () => ipcRenderer.invoke('library:pickOutput'),
     onEvent: (cb: (e: IndexEvent) => void) => {

@@ -337,6 +337,43 @@ export interface ProcessFeatures {
   aiEnrich: boolean
 }
 
+/**
+ * A portable bundle of a set's processing rules — everything in the "How this set is
+ * processed" panel except the set's identity (folders/output/name). Exported to a
+ * `.dslrules.json` file so the hand-curated attachment exclude/keep lists (which take
+ * real time to build) can be reused on another set. Only fields present are applied on
+ * import; missing fields leave the target's current value untouched.
+ */
+export interface ProcessingRules {
+  /** File-format version, so an importer can reject an incompatible file. */
+  version: 1
+  /** Name of the set these were exported from (display only, shown on import). */
+  exportedFrom?: string
+  /** When they were exported (epoch ms, display only). */
+  exportedAt?: number
+  features?: ProcessFeatures
+  bates?: { prefix: string; start: number } | null
+  combineAttachments?: boolean
+  excludeSignatures?: boolean
+  excludeAttachments?: string[]
+  excludeFingerprints?: string[]
+  keepAttachments?: string[]
+  keepNames?: string[]
+  attachmentPaths?: Record<string, string>
+}
+
+/** Outcome of importing a rules file: the updated set, or a reason it didn't apply. */
+export interface ImportRulesResult {
+  ok: boolean
+  /** User dismissed the file picker — not an error, just nothing to do. */
+  cancelled?: boolean
+  /** Human-readable failure (bad file, wrong format) — already shown to the user. */
+  error?: string
+  detail?: CollectionDetail | null
+  /** Count of attachment exclude/keep rules applied (for a confirmation message). */
+  ruleCount?: number
+}
+
 /** Artifacts the production pass writes under the output folder. */
 export interface ProductionResult {
   /** Documents in the production (rendered this run + reused unchanged). */
@@ -357,10 +394,8 @@ export interface ProductionResult {
   highlightsPath?: string
   /** Unrenderable files given a native slip-sheet placeholder (still Bates-stamped). */
   slipSheets: number
-  /** Attachments filtered out (by filename) into the Excluded/ folder. */
+  /** Attachments set aside into the Excluded/ folder (for review). */
   excludedAttachments: number
-  /** Excluded filenames whose copies differ in size — routed to Needs Review for a human check. */
-  inconsistentAttachments: number
   /** Per-file errors during production (non-fatal; the file is skipped). */
   errors: { file: string; error: string }[]
 }
@@ -385,11 +420,23 @@ export interface Collection {
   /** Drop email signature graphics + footer boilerplate when rendering to PDF;
    *  also sets aside logo/icon attachments (small images) to Excluded/. */
   excludeSignatures?: boolean
-  /** Attachment filenames to exclude from the production (routed to Excluded/). */
+  /** Attachment filenames to exclude from the production — every instance, any size
+   *  (routed to Excluded/). The "exclude all of this name" scope. */
   excludeAttachments?: string[]
-  /** Set aside attachments smaller than this many KB as likely-insignificant
-   *  (logos/icons/tiny files) → Excluded/. 0/undefined disables the size filter. */
-  excludeAttachmentsUnderKb?: number
+  /** Attachment fingerprints (name|size) to exclude — only this exact file, not other
+   *  attachments that happen to share the name. The "exclude just this file" scope. */
+  excludeFingerprints?: string[]
+  /** Attachment fingerprints (name|size) the user restored — always kept, even if a
+   *  filename rule or the signature/logo detection would otherwise exclude them. The
+   *  "keep just this file" scope. */
+  keepAttachments?: string[]
+  /** Attachment filenames always kept — every instance, any size. The "keep all of
+   *  this name" scope; overrides every exclusion rule. */
+  keepNames?: string[]
+  /** Display-only: folder a "just this file" keep/exclude rule was set from, keyed by
+   *  its fingerprint (name|size). Same name+size can recur across emails, so the path
+   *  disambiguates which file the rule points at. Not used for matching. */
+  attachmentPaths?: Record<string, string>
   /** Whether to enrich each doc with a Claude-generated summary/type/parties. */
   aiEnrich: boolean
   /** Production artifacts produced on the last run. */
@@ -436,6 +483,31 @@ export interface CollectionDetail extends Collection {
   docs: IndexedDoc[]
 }
 
+/** One entry in a folder listing for the file explorer. */
+export interface DirEntry {
+  name: string
+  path: string
+  isDir: boolean
+  size: number
+  /** Lowercased extension incl. dot (e.g. ".pdf"); "" for directories/extensionless. */
+  ext: string
+}
+
+export type PreviewKind = 'pdf' | 'image' | 'text' | 'unsupported'
+
+/** Bytes (or text) of a single file, read for inline preview. */
+export interface FilePreview {
+  ok: boolean
+  kind: PreviewKind
+  mime: string
+  size: number
+  /** base64 for pdf/image; utf8 text for text; "" when unsupported / too large. */
+  data: string
+  /** True when the file exceeds the preview size cap (offer Reveal instead). */
+  tooLarge?: boolean
+  error?: string
+}
+
 export interface LibrarySearchHit {
   doc: IndexedDoc
   score: number
@@ -453,12 +525,11 @@ export interface CreateCollectionInput {
   combineAttachments?: boolean
   excludeSignatures?: boolean
   excludeAttachments?: string[]
-  excludeAttachmentsUnderKb?: number
   aiEnrich: boolean
 }
 
 export type IndexEvent =
-  | { type: 'index-progress'; collectionId: string; phase: string; done: number; total: number }
+  | { type: 'index-progress'; collectionId: string; phase: string; done: number; total: number; currentFile?: string }
   | { type: 'index-done'; collectionId: string; fileCount: number }
   | { type: 'index-paused'; collectionId: string }
   | { type: 'index-error'; collectionId: string; message: string }
@@ -497,6 +568,14 @@ export interface Api {
     pick: () => Promise<string[]>
     reveal: (path: string) => Promise<void>
     estimateTokens: (paths: string[]) => Promise<number>
+    /** List the immediate children of a directory (dirs first, then files). */
+    listDir: (path: string) => Promise<DirEntry[]>
+    /** Read a file for inline preview (pdf/image as base64, text as utf8). */
+    read: (path: string) => Promise<FilePreview>
+    /** Render an Office doc (docx/xlsx/pptx) to an HTML fragment for inline preview. */
+    renderOffice: (path: string) => Promise<{ ok: boolean; html?: string; error?: string }>
+    /** Probe a path's type/size (to render a source root as a folder or file). */
+    stat: (path: string) => Promise<{ isDir: boolean; size: number } | null>
   }
   library: {
     list: () => Promise<Collection[]>
@@ -512,6 +591,26 @@ export interface Api {
     search: (id: string, query: string) => Promise<LibrarySearchHit[]>
     exportIndex: (id: string, format: 'xlsx' | 'docx') => Promise<ExportResult>
     exportHighlights: (id: string, format: 'csv' | 'xlsx') => Promise<ExportResult>
+    /** Replace the excluded-attachment filename list; returns the updated detail. */
+    setExcluded: (id: string, names: string[]) => Promise<CollectionDetail | null>
+    /** Replace the restored-attachment fingerprint (name|size) list; an optional
+     *  {fp,path} records a display path for a "just this file" rule. Returns the detail. */
+    setKept: (id: string, fingerprints: string[], record?: { fp: string; path: string }) => Promise<CollectionDetail | null>
+    /** Replace the per-file exclude list (name|size fingerprints); optional {fp,path}
+     *  records a display path. Returns the updated detail. */
+    setExcludedFps: (id: string, fingerprints: string[], record?: { fp: string; path: string }) => Promise<CollectionDetail | null>
+    /** Replace the keep-by-name list; returns the updated detail. */
+    setKeptNames: (id: string, names: string[]) => Promise<CollectionDetail | null>
+    /** Change which deliverables the set produces; the next re-run produces them. */
+    setFeatures: (id: string, features: ProcessFeatures) => Promise<CollectionDetail | null>
+    /** Export this set's processing rules to a `.dslrules.json` file (save dialog). */
+    exportRules: (id: string) => Promise<ExportResult>
+    /** Import processing rules from a `.dslrules.json` file (open dialog) into this set. */
+    importRules: (id: string) => Promise<ImportRulesResult>
+    /** Pick source folders and/or files to add to a set. */
+    pickSources: () => Promise<string[]>
+    /** Append source paths (folders/files) to a set; returns the updated detail. */
+    addSources: (id: string, paths: string[]) => Promise<CollectionDetail | null>
     pickFolders: () => Promise<string[]>
     /** Pick the single production output folder (created if needed). */
     pickOutput: () => Promise<string | null>

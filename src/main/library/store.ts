@@ -20,9 +20,22 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
+// Crash-safe write: serialise to a sibling temp file, then atomically rename it over the
+// target. A direct writeFile truncates first, so the app closing mid-write would leave a
+// half-written (corrupt) collection.json — which load treats as "corrupt" and drops the
+// whole set, losing the user's exclude/include rules. rename() is atomic, so a reader
+// always sees either the old complete file or the new one, never a partial one.
+let writeSeq = 0
 async function writeJson(file: string, data: unknown): Promise<void> {
   await ensureDir(path.dirname(file))
-  await fs.writeFile(file, JSON.stringify(data), 'utf8')
+  const tmp = `${file}.${process.pid}.${writeSeq++}.tmp`
+  try {
+    await fs.writeFile(tmp, JSON.stringify(data), 'utf8')
+    await fs.rename(tmp, file)
+  } catch (e) {
+    await fs.rm(tmp, { force: true }).catch(() => {})
+    throw e
+  }
 }
 
 export async function listCollections(): Promise<Collection[]> {

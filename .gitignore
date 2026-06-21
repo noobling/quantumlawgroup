@@ -11,3 +11,4 @@ bundled.key
 *.tsbuildinfo
 .claude/settings.local.json
 .tmp-*
+scripts/.*.bundle.mjs

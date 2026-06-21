@@ -43,20 +43,52 @@ export function makeRenderWindow(): BrowserWindow {
   })
 }
 
-// Render one email's HTML to a PDF using a SHARED window (created once per batch).
-// Reusing the window avoids the heavy per-email window create/destroy cost.
+// Monotonic counter so concurrent renders (a pool of windows) never collide on a temp
+// filename — Date.now()+performance.now() can repeat within the same millisecond.
+let renderSeq = 0
+
+// A single document must never be able to hang the whole run. loadFile resolves on
+// did-finish-load and printToPDF on the compositor — either can stall indefinitely on a
+// malformed page or a wedged GPU. Cap each at a generous ceiling; a real render is well
+// under a second, so this only ever fires on a genuine hang, and the caller then falls
+// back to a slip-sheet for that one document.
+const RENDER_TIMEOUT_MS = 30_000
+
+export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        reject(e)
+      }
+    )
+  })
+}
+
+// Render one email's HTML to a PDF in the given window. Windows are pooled and reused
+// across documents to avoid the heavy per-document create/destroy cost; several can
+// render at once, each in its own window.
 export async function renderInto(win: BrowserWindow, html: string): Promise<Buffer> {
-  const tmp = path.join(os.tmpdir(), `dsl-email-${process.pid}-${Date.now()}-${Math.round(performance.now())}.html`)
+  const tmp = path.join(os.tmpdir(), `dsl-email-${process.pid}-${renderSeq++}.html`)
   await fs.writeFile(tmp, html, 'utf8')
   try {
-    await win.loadFile(tmp) // resolves on did-finish-load (subresources loaded)
+    await withTimeout(win.loadFile(tmp), RENDER_TIMEOUT_MS, 'loadFile') // resolves on did-finish-load
     await new Promise((r) => setTimeout(r, 30)) // brief settle for final layout
     return Buffer.from(
-      await win.webContents.printToPDF({
-        printBackground: true,
-        pageSize: 'A4',
-        margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 }
-      })
+      await withTimeout(
+        win.webContents.printToPDF({
+          printBackground: true,
+          pageSize: 'A4',
+          margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 }
+        }),
+        RENDER_TIMEOUT_MS,
+        'printToPDF'
+      )
     )
   } finally {
     await fs.rm(tmp, { force: true }).catch(() => {})
@@ -128,6 +160,12 @@ export async function stampBates(
     page.drawText(text, { x: width - tw - 22, y: 16, size, font, color: rgb(0.25, 0.28, 0.34) })
   })
   return { bytes: Buffer.from(await doc.save()), begin: label(startNum), end: label(startNum + pages.length - 1), pages: pages.length }
+}
+
+/** Page count of a PDF without stamping it — used to pre-compute Bates spans so a
+ *  parallel render pass can be followed by a sequential, in-order numbering pass. */
+export async function pageCount(pdf: Buffer): Promise<number> {
+  return (await PDFDocument.load(pdf)).getPageCount()
 }
 
 async function collectEml(dir: string, skipDir: string, found: string[], counts: { skipped: number }): Promise<void> {

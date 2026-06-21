@@ -88,17 +88,18 @@ check('grouping is case-insensitive', es([{ name: 'A.PDF', size: 1000 }, { name:
 check('total counts every copy', es([{ name: 'a', size: 1 }, { name: 'a', size: 1 }, { name: 'b', size: 2 }]).total === 3)
 check('empty → zero', es([]).total === 0 && es([]).inconsistentNames === 0)
 
-console.log('isInsignificantAttachment (auto logo + small-file removal):')
+console.log('isInsignificantAttachment (auto logo removal):')
 const ins = eh.isInsignificantAttachment
 const att = (bytes, contentType, filename) => ({ content: Buffer.alloc(bytes), contentType, filename })
-check('file under threshold → set aside', ins(att(5 * 1024, 'application/pdf', 'x.pdf'), { underBytes: 10 * 1024 }) === true)
-check('file over threshold → kept', ins(att(50 * 1024, 'application/pdf', 'x.pdf'), { underBytes: 10 * 1024 }) === false)
-check('no threshold, non-image → kept', ins(att(1024, 'application/pdf', 'x.pdf'), {}) === false)
+check('any attachment without excludeSignatures → kept', ins(att(1 * 1024, 'application/pdf', 'x.pdf'), {}) === false)
+check('large non-image with excludeSignatures → kept', ins(att(50 * 1024, 'application/pdf', 'x.pdf'), { excludeSignatures: true }) === false)
+check('very small non-image + excludeSignatures → set aside', ins(att(1 * 1024, 'application/pdf', 'tiny.pdf'), { excludeSignatures: true }) === true)
+check('very small file without excludeSignatures → kept', ins(att(1 * 1024, 'application/pdf', 'tiny.pdf'), {}) === false)
 check('small logo image + excludeSignatures → set aside', ins(att(8 * 1024, 'image/png', 'logo.png'), { excludeSignatures: true }) === true)
 check('small logo image without excludeSignatures → kept', ins(att(8 * 1024, 'image/png', 'logo.png'), {}) === false)
-check('screenshot filename protected even if small', ins(att(8 * 1024, 'image/png', 'screenshot-1.png'), { excludeSignatures: true }) === false)
+check('screenshot filename protected even if small-ish', ins(att(8 * 1024, 'image/png', 'screenshot-1.png'), { excludeSignatures: true }) === false)
 check('large image kept (content photo)', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true }) === false)
-check('non-image small file ignored by signature filter', ins(att(8 * 1024, 'application/pdf', 'tiny.pdf'), { excludeSignatures: true }) === false)
+check('non-tiny non-image with excludeSignatures → kept', ins(att(8 * 1024, 'application/pdf', 'doc.pdf'), { excludeSignatures: true }) === false)
 
 console.log('recurring-logo detection (set-wide repeat):')
 const fp = eh.attFingerprint
@@ -108,6 +109,22 @@ check('large recurring image → set aside (beats size heuristic)', ins(att(200 
 check('same image, NOT in recurring set → kept', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true, recurringImageFps: new Set() }) === false)
 check('recurring image needs excludeSignatures', ins(att(200 * 1024, 'image/png', 'banner.png'), { recurringImageFps: recur }) === false)
 check('recurring set ignores non-images', ins(att(200 * 1024, 'application/pdf', 'banner.png'), { excludeSignatures: true, recurringImageFps: recur }) === false)
+
+console.log('per-doc exclude/restore invalidation (targeted re-render):')
+const sd = m.symmetricDiff
+const aff = m.docExcludeAffected
+check('symmetricDiff finds the flipped entry', [...sd(['a', 'b'], ['a', 'c'])].sort().join(',') === 'b,c')
+check('symmetricDiff empty when identical', sd(['a', 'b'], ['b', 'a']).size === 0)
+// A logo email: attachments logo.png|1000 and report.pdf|50000.
+const keys = ['logo.png|1000', 'report.pdf|50000']
+check('no change → not affected', aff(keys, new Set(), new Set()) === false)
+check('excluding a name this doc has → affected', aff(keys, new Set(['logo.png']), new Set()) === true)
+check('excluding a name this doc lacks → not affected', aff(keys, new Set(['other.png']), new Set()) === false)
+check('restoring a fingerprint this doc has → affected', aff(keys, new Set(), new Set(['logo.png|1000'])) === true)
+check('restoring a same-name DIFFERENT size → not affected', aff(keys, new Set(), new Set(['logo.png|9999'])) === false)
+check('doc with no attachments → never affected', aff([], new Set(['logo.png']), new Set(['logo.png|1000'])) === false)
+check('pre-feature manifest (no keys) + a change → affected (safe re-render)', aff(undefined, new Set(['logo.png']), new Set()) === true)
+check('pre-feature manifest (no keys) + no change → not affected', aff(undefined, new Set(), new Set()) === false)
 
 console.log('\n' + (ok ? 'ALL PASS ✓' : 'FAILURES ✗'))
 process.exit(ok ? 0 : 1)

@@ -64,7 +64,18 @@ async function walk(folders: string[]): Promise<string[]> {
       else if (INDEXABLE_EXTENSIONS.includes(path.extname(e.name).toLowerCase())) out.push(full)
     }
   }
-  for (const f of folders) await recurse(f, 0)
+  // A source can be a folder (walked) or a single file (added directly), so a
+  // user can attach individual documents, not just directories.
+  for (const f of folders) {
+    let stat: import('fs').Stats
+    try {
+      stat = await fs.stat(f)
+    } catch {
+      continue
+    }
+    if (stat.isDirectory()) await recurse(f, 0)
+    else if (INDEXABLE_EXTENSIONS.includes(path.extname(f).toLowerCase())) out.push(f)
+  }
   return out
 }
 
@@ -141,6 +152,7 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
     const saveEvery = Math.max(5, Math.floor(pending.length / 20))
     for (const { doc, prevId } of pending) {
       if (stopped(collectionId)) break
+      emit({ type: 'index-progress', collectionId, phase: 'Reading documents', done, total: docs.length, currentFile: doc.name })
       const ext = doc.ext
       let body = ''
       try {
@@ -175,7 +187,7 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
       addDoc(lexical, doc.id, indexableText(doc, body))
       done++
       if (done % saveEvery === 0) await saveDocs(collectionId, docs)
-      emit({ type: 'index-progress', collectionId, phase: 'Reading documents', done, total: docs.length })
+      emit({ type: 'index-progress', collectionId, phase: 'Reading documents', done, total: docs.length, currentFile: doc.name })
     }
 
     // Drop docs whose files disappeared.
@@ -198,7 +210,7 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
       try {
         collection.production = await buildProduction(collection, docs, emit, () => stopped(collectionId))
       } catch (e) {
-        collection.production = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, excludedAttachments: 0, inconsistentAttachments: 0, errors: [{ file: '(production)', error: (e as Error).message }] }
+        collection.production = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, excludedAttachments: 0, errors: [{ file: '(production)', error: (e as Error).message }] }
       }
     }
 
@@ -243,6 +255,7 @@ async function enrich(
   for (let i = 0; i < pending.length; i += batchSize) {
     if (stopped(collection.id)) break
     const batch = pending.slice(i, i + batchSize)
+    emit({ type: 'index-progress', collectionId: collection.id, phase: 'Summarizing', done, total: pending.length, currentFile: batch[0]?.name })
     const payload = batch.map((d) => ({
       id: d.id,
       name: d.name,

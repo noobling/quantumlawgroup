@@ -8,6 +8,26 @@ import type { ParsedMail, Attachment } from 'mailparser'
 const TRANSPARENT_PX =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
+/**
+ * Replace any `data:<mime>;base64,<content>` embedding of `content` in `body` with a 1×1
+ * transparent pixel. Apple Mail inlines images directly as data: URIs in the HTML (in
+ * addition to attaching them with a Content-ID), so stripping the cid reference alone
+ * doesn't keep an excluded image out of the rendered body. Index-based (no 24k-char
+ * regex); collapses the whole `data:…;base64,…` token, falling back to dropping just the
+ * payload if the `data:` prefix isn't right before it.
+ */
+function stripInlineDataUri(body: string, content?: Buffer): string {
+  if (!content || !content.length) return body
+  const b64 = content.toString('base64')
+  let out = body
+  for (let i = out.indexOf(b64); i !== -1; i = out.indexOf(b64)) {
+    const start = out.lastIndexOf('data:', i)
+    const end = i + b64.length
+    out = start !== -1 && i - start <= 64 ? out.slice(0, start) + TRANSPARENT_PX + out.slice(end) : out.slice(0, i) + out.slice(end)
+  }
+  return out
+}
+
 function esc(s = ''): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
@@ -99,24 +119,28 @@ export function attFingerprint(filename = '', size = 0): string {
   return filename.trim().toLowerCase() + '|' + size
 }
 
+/** Attachments smaller than this rarely carry substantive content (empty MIME
+ *  parts, tracking pixels, tiny icons), so the skipper sets them aside. Restorable
+ *  from Excluded/ if one turns out to matter. */
+export const SMALL_ATTACHMENT_BYTES = 3 * 1024
+
 /**
  * Whether a file attachment is likely non-substantive and can be set aside for
- * review (Excluded/) rather than produced. Signals, all opt-in:
- *  - any file smaller than `underBytes` (the user's "small ⇒ probably not important"
- *    threshold), regardless of type;
- *  - when excludeSignatures is on, an image that is either a logo/icon by itself
- *    (small in bytes AND pixels — keeps photos/screenshots) OR whose fingerprint
- *    recurs across the set (a signature graphic re-attached to many emails — caught
- *    regardless of its individual size).
+ * review (Excluded/) rather than produced. Signals, all gated on excludeSignatures:
+ *  - any very small file (< SMALL_ATTACHMENT_BYTES), regardless of type;
+ *  - an image that is a logo/icon by itself (small in bytes AND pixels — keeps
+ *    photos/screenshots) OR whose fingerprint recurs across the set (a signature
+ *    graphic re-attached to many emails — caught regardless of its individual size).
  * Excluding only sets a file aside for review — it is never deleted.
  */
 export function isInsignificantAttachment(
   a: Attachment,
-  opts: { excludeSignatures?: boolean; underBytes?: number; recurringImageFps?: Set<string> }
+  opts: { excludeSignatures?: boolean; recurringImageFps?: Set<string> }
 ): boolean {
+  if (!opts.excludeSignatures) return false
   const size = a.content?.length || 0
-  if (opts.underBytes && size > 0 && size < opts.underBytes) return true
-  if (opts.excludeSignatures && a.contentType?.startsWith('image/')) {
+  if (size > 0 && size < SMALL_ATTACHMENT_BYTES) return true
+  if (a.contentType?.startsWith('image/')) {
     if (isSignatureGraphic(a.content, a.filename)) return true
     if (opts.recurringImageFps?.has(attFingerprint(a.filename, size))) return true
   }
@@ -140,13 +164,36 @@ export function stripBoilerplate(html: string): string {
 
 export function buildEmailHtml(
   mail: ParsedMail,
-  opts: { excludeSignatures?: boolean; excludeAttachments?: string[]; excludeUnderBytes?: number; recurringImageFps?: Set<string> } = {}
+  opts: {
+    excludeSignatures?: boolean
+    /** Exclude every attachment with one of these names (all instances, any size). */
+    excludeAttachments?: string[]
+    /** Exclude only attachments matching one of these fingerprints (name|size) — "this file". */
+    excludeFingerprints?: Set<string>
+    recurringImageFps?: Set<string>
+    /** Attachment fingerprints (name|size) the user restored — never exclude these. */
+    keepAttachments?: Set<string>
+    /** Keep every attachment with one of these names (overrides exclusion, any size). */
+    keepNames?: Set<string>
+  } = {}
 ): { html: string; fileAttachments: Attachment[]; excludedAttachments: Attachment[] } {
   const atts = (mail.attachments || []) as Attachment[]
   const excludeSignatures = !!opts.excludeSignatures
-  const excludeUnderBytes = opts.excludeUnderBytes || 0
   const recurringImageFps = opts.recurringImageFps
+  const keepFps = opts.keepAttachments
+  const keepNames = opts.keepNames
+  const nameOf = (a: Attachment): string => (a.filename || '').trim().toLowerCase()
+  // A "keep" override wins over every exclusion rule. It can be pinned per-file
+  // (by fingerprint) or for all files of a name.
+  const isKept = (a: Attachment): boolean =>
+    !!keepFps?.has(attFingerprint(a.filename, a.content?.length || 0)) || !!keepNames?.has(nameOf(a))
   const excludeNames = new Set((opts.excludeAttachments || []).map((s) => s.trim().toLowerCase()).filter(Boolean))
+  const excludeFps = opts.excludeFingerprints
+  // An attachment the user explicitly set aside (by name or by file fingerprint), unless
+  // a keep rule overrides it. Checked for INLINE images too, so an excluded image that's
+  // embedded in the body via cid: is stripped — not just the ones attached as files.
+  const isUserExcluded = (a: Attachment): boolean =>
+    !isKept(a) && (excludeNames.has(nameOf(a)) || !!excludeFps?.has(attFingerprint(a.filename, a.content?.length || 0)))
   let body = typeof mail.html === 'string' && mail.html ? mail.html : mail.textAsHtml || '<p>(no message body)</p>'
 
   // Apple Mail interleaves several full <html>…</html> documents (one per inline
@@ -155,10 +202,15 @@ export function buildEmailHtml(
   body = body.replace(/<\/?(?:html|head|body)[^>]*>/gi, '').replace(/<meta\b[^>]*>/gi, '')
   // Collapse the empty spacer blocks Apple Mail leaves where inline parts sat
   // (stacks of empty <div>s and <br>s that otherwise render as big gaps).
+  // Keep the alternatives non-overlapping: `\s` already matches a space AND a non-breaking
+  // space (U+00A0), so do NOT add a literal-space/U+00A0 alternative. A `(?:\s|<nbsp>|…)*`
+  // over a long whitespace/<br> run backtracks exponentially and pins the main thread — a
+  // single big Apple Mail email then hangs the whole production, and because the freeze is
+  // synchronous no async render timeout can interrupt it.
   for (let i = 0; i < 3; i++) {
-    body = body.replace(/<div[^>]*>(?:\s|&nbsp;| |<br\b[^>]*\/?>)*<\/div>/gi, '')
+    body = body.replace(/<div[^>]*>(?:\s|&nbsp;|<br\b[^>]*\/?>)*<\/div>/gi, '')
   }
-  body = body.replace(/(?:\s*<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
+  body = body.replace(/(?:<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
 
   // Resolve cid: references → attachments. Prefer Content-ID; fall back to the
   // order cids appear vs. the order attachments arrive (handles emails whose
@@ -177,15 +229,22 @@ export function buildEmailHtml(
     `<span style="display:inline-block;padding:3px 9px;margin:3px 2px;border:1px solid #d2d2d7;border-radius:6px;background:#f5f5f7;color:#515154;font-size:12.5px;">📎 ${esc(name)}</span>`
 
   const embedded = new Set<Attachment>()
+  // Inline images the user explicitly excluded — stripped from the body here, and
+  // returned so the production routes them to Excluded/ for review (same as excluded
+  // file attachments), instead of silently embedding them in the email PDF.
+  const excludedInline: Attachment[] = []
   for (const cid of cidRefs) {
     const a = byId.get(cid) || orderMap.get(cid)
     if (a && a.contentType?.startsWith('image/')) {
       embedded.add(a)
       const recurringLogo = !!recurringImageFps?.has(attFingerprint(a.filename, a.content?.length || 0))
-      if (excludeSignatures && (isSignatureGraphic(a.content, a.filename) || recurringLogo)) {
-        // Drop signature logos / social icons entirely (content photos are kept).
+      const userExcluded = isUserExcluded(a)
+      if (userExcluded || (excludeSignatures && !isKept(a) && (isSignatureGraphic(a.content, a.filename) || recurringLogo))) {
+        // Drop signature logos / social icons, and any image the user excluded, entirely
+        // (content photos are kept). Keep an excluded image for review in Excluded/.
         body = body.replace(new RegExp('<img[^>]*cid:' + escRe(cid) + '[^>]*>', 'gi'), '')
         body = body.split('cid:' + cid).join(TRANSPARENT_PX)
+        if (userExcluded) excludedInline.push(a)
       } else {
         // Inline image: embed as a data URI.
         body = body.split('cid:' + cid).join(`data:${a.contentType};base64,${a.content.toString('base64')}`)
@@ -202,18 +261,30 @@ export function buildEmailHtml(
   if (excludeSignatures) {
     body = stripBoilerplate(body)
     // Tidy blocks the removals emptied out.
-    for (let i = 0; i < 2; i++) body = body.replace(/<div[^>]*>(?:\s|&nbsp;| |<br\b[^>]*\/?>)*<\/div>/gi, '')
-    body = body.replace(/(?:\s*<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
+    for (let i = 0; i < 2; i++) body = body.replace(/<div[^>]*>(?:\s|&nbsp;|<br\b[^>]*\/?>)*<\/div>/gi, '')
+    body = body.replace(/(?:<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
   }
 
   // Attachments not embedded inline, split into kept vs. set-aside: excluded by
-  // filename, or auto-detected as insignificant (a logo/icon, or a tiny file).
+  // filename, or auto-detected as insignificant (a signature logo/icon). A restored
+  // attachment (its fingerprint in keepAttachments) is always kept — this overrides
+  // both the filename rule and the signature/recurring detection so it isn't set
+  // aside again on the next run.
   const allAttachments = atts.filter((a) => !embedded.has(a))
   const isExcluded = (a: Attachment): boolean =>
-    excludeNames.has((a.filename || '').trim().toLowerCase()) ||
-    isInsignificantAttachment(a, { excludeSignatures, underBytes: excludeUnderBytes, recurringImageFps })
-  const excludedAttachments = allAttachments.filter(isExcluded)
+    !isKept(a) &&
+    (excludeNames.has(nameOf(a)) ||
+      !!excludeFps?.has(attFingerprint(a.filename, a.content?.length || 0)) ||
+      isInsignificantAttachment(a, { excludeSignatures, recurringImageFps }))
+  // Excluded = file attachments that match a rule, PLUS inline images the user excluded
+  // (already stripped from the body above). Both get set aside in Excluded/.
+  const excludedAttachments = [...allAttachments.filter(isExcluded), ...excludedInline]
   const fileAttachments = allAttachments.filter((a) => !isExcluded(a))
+
+  // Belt-and-suspenders for the combined PDF: an excluded image Apple Mail inlined as a
+  // raw data: URI (rather than a cid) would otherwise survive in the body. Strip the
+  // data-URI form of every excluded attachment so no excluded content reaches the PDF.
+  for (const a of excludedAttachments) body = stripInlineDataUri(body, a.content)
 
   const addrText = (v: ParsedMail['to']): string =>
     (Array.isArray(v) ? v.map((t) => t.text).join(', ') : v?.text) || ''

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '../state/store'
 import ProgressBar from '../components/ProgressBar'
+import { formatEta } from '../lib/format'
 import type { Collection, ProcessFeatures } from '@shared/types'
 import {
   FolderCog,
@@ -115,7 +116,7 @@ function CollectionCard({
   onResume
 }: {
   c: Collection
-  progress?: { phase: string; done: number; total: number }
+  progress?: { phase: string; done: number; total: number; pct: number; currentFile?: string; etaMs?: number }
   onOpen: () => void
   onReindex: () => void
   onDelete: () => void
@@ -124,7 +125,7 @@ function CollectionCard({
 }): JSX.Element {
   const indexing = c.status === 'indexing'
   const isPaused = c.status === 'paused'
-  const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0
+  const pct = progress?.pct ?? 0
   return (
     <div className="rounded-xl border border-ink-700/70 bg-ink-900/60 p-4 hover:border-ink-600 transition">
       <button onClick={onOpen} className="block text-left w-full" title="Open">
@@ -139,7 +140,11 @@ function CollectionCard({
           {indexing ? (
             <span className="text-accent flex items-center gap-1.5">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              {progress ? `${progress.phase}… ${progress.done}/${progress.total}` : 'Processing…'}
+              {/* Show the count only when there's a real total; otherwise just the phase. */}
+              {progress ? `${progress.phase}…${progress.total > 0 ? ` ${progress.done}/${progress.total}` : ''}` : 'Processing…'}
+              {progress && formatEta(progress.etaMs) && (
+                <span className="text-ink-600">· {formatEta(progress.etaMs)}</span>
+              )}
             </span>
           ) : isPaused ? (
             <span className="text-amber-300 flex items-center gap-1.5">
@@ -189,6 +194,11 @@ function CollectionCard({
       </div>
 
       {indexing && <ProgressBar pct={pct} className="mt-2" />}
+      {indexing && progress?.currentFile && (
+        <div className="mt-1.5 text-[11px] text-ink-600 truncate" title={progress.currentFile}>
+          {progress.currentFile}
+        </div>
+      )}
     </div>
   )
 }
@@ -234,9 +244,6 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [combine, setCombine] = useState(true)
   const [excludeSignatures, setExcludeSignatures] = useState(false)
   const [excludeAttachmentsText, setExcludeAttachmentsText] = useState('')
-  // Default 10 KB: in the sample matter the smallest real document was ~11 KB, while
-  // signature logos / calendar invites / empty MIME parts all fell below it.
-  const [excludeUnderKbText, setExcludeUnderKbText] = useState('10')
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
@@ -281,7 +288,6 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean),
-      excludeAttachmentsUnderKb: Math.max(0, parseInt(excludeUnderKbText, 10) || 0),
       aiEnrich
     })
     onClose()
@@ -401,19 +407,9 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
                 className="mt-1 w-full rounded-lg bg-ink-950 border border-ink-700 px-2.5 py-1.5 text-[12px] text-slate-200 font-mono outline-none focus:border-accent/60 resize-y"
               />
               <div className="text-[11px] text-ink-600">
-                Excluded files go to an <span className="text-slate-400">Excluded/</span> folder; copies of one name with different sizes are flagged in <span className="text-slate-400">Needs Review</span>.
+                Excluded files go to an <span className="text-slate-400">Excluded/</span> folder so you can review them all and restore any you want to keep.
               </div>
             </div>
-            <label className="flex items-center gap-2 text-[12.5px] text-slate-300">
-              <span>Also set aside attachments under</span>
-              <input
-                value={excludeUnderKbText}
-                onChange={(e) => setExcludeUnderKbText(e.target.value.replace(/[^0-9]/g, ''))}
-                placeholder="e.g. 10"
-                className="w-16 bg-ink-950 border border-ink-700 rounded px-2 py-1 text-slate-200 outline-none focus:border-accent/60"
-              />
-              <span className="text-ink-600">KB — small files are usually logos/icons or empty parts, not real documents (set 0 to disable; kept in Excluded/ to double-check)</span>
-            </label>
             <div className="flex items-center gap-2 text-[12px]">
               <Hash className="w-3.5 h-3.5 text-ink-600" />
               <span className="text-ink-600">Bates prefix</span>

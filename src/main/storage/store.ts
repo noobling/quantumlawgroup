@@ -40,9 +40,19 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
+// Crash-safe write: temp file + atomic rename, so the app closing mid-write can't leave a
+// truncated (corrupt) settings/matter file. See the note in library/store.ts.
+let writeSeq = 0
 async function writeJson(file: string, data: unknown): Promise<void> {
   await ensureDir(path.dirname(file))
-  await fs.writeFile(file, JSON.stringify(data, null, 2), 'utf8')
+  const tmp = `${file}.${process.pid}.${writeSeq++}.tmp`
+  try {
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
+    await fs.rename(tmp, file)
+  } catch (e) {
+    await fs.rm(tmp, { force: true }).catch(() => {})
+    throw e
+  }
 }
 
 // ───────────────────────── Settings ─────────────────────────

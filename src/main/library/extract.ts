@@ -3,6 +3,7 @@ import path from 'path'
 import mammoth from 'mammoth'
 import ExcelJS from 'exceljs'
 import type { DocKind } from '@shared/types'
+import { xlsText, pptText, pptxText } from './officeHtml'
 
 // Shared text-extraction used by both the office tools and the library indexer.
 
@@ -43,7 +44,7 @@ export async function extractXlsxText(filePath: string): Promise<string> {
   return out.join('\n')
 }
 
-export const INDEXABLE_EXTENSIONS = ['.eml', '.pdf', '.docx', '.xlsx', '.txt', '.md', '.csv']
+export const INDEXABLE_EXTENSIONS = ['.eml', '.pdf', '.docx', '.xlsx', '.xls', '.pptx', '.ppsx', '.ppt', '.txt', '.md', '.csv']
 
 export interface Extracted {
   text: string
@@ -60,6 +61,13 @@ export async function extractText(filePath: string): Promise<Extracted> {
       return { text: await extractDocxText(filePath), kind: 'doc' }
     case '.xlsx':
       return { text: await extractXlsxText(filePath), kind: 'doc' }
+    case '.xls':
+      return { text: await xlsText(filePath), kind: 'doc' }
+    case '.pptx':
+    case '.ppsx':
+      return { text: await pptxText(filePath), kind: 'doc' }
+    case '.ppt':
+      return { text: await pptText(filePath), kind: 'doc' }
     default:
       return { text: await fs.readFile(filePath, 'utf8'), kind: 'doc' }
   }

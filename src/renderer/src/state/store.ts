@@ -7,6 +7,7 @@ import type {
   IndexEvent,
   LibrarySearchHit,
   Matter,
+  ProcessFeatures,
   Settings,
   ThreadMessage,
   ToolActivity
@@ -25,6 +26,76 @@ let unsubscribers: Array<() => void> = []
 
 /** Throttle for streaming the open set's docs in while it indexes. */
 let lastDetailRefresh = 0
+
+/**
+ * Per-collection timing anchors for the progress ETA. We measure throughput
+ * within a single phase only (each phase resets `done`/`total`), anchoring on
+ * the first sample of a phase and smoothing the estimate as work accrues.
+ */
+const indexTiming: Record<string, { phase: string; anchorTime: number; anchorDone: number; etaMs?: number }> = {}
+
+/**
+ * Collections whose exclude/restore lists changed while a re-run was already in
+ * flight. The backend drops a re-run requested mid-run, so we remember it and
+ * fire one more re-run when the current one finishes — no attachment change is lost.
+ */
+const rerunWhenIdle = new Set<string>()
+// An Outputs toggle persists via setFeatures (an async IPC round-trip) but the UI lets
+// the user click Re-run immediately after. reindex reads the collection FROM DISK in the
+// main process, so it must not start until that save has landed — otherwise the run uses
+// the pre-toggle features and silently skips the just-enabled deliverable. Track the
+// in-flight save per set so reindexCollection can await it first.
+const pendingFeatureSave = new Map<string, Promise<unknown>>()
+
+// A run streams several sequential phases (index → optional summarize → production:
+// scan → check → render → number). To show ONE continuous bar instead of each phase
+// refilling from 0, every phase owns a fixed slice of the whole, sized by its rough
+// share of the work. Overall % = the slices fully before this phase + this phase's own
+// slice scaled by its done/total. Phases that don't run for a given set (no AI
+// summaries, native mode, nothing changed) are simply skipped — the bar steps forward
+// over their slice, never backward. The last phase's slice lands the bar on 100%.
+const PHASE_WEIGHTS: { phase: string; weight: number }[] = [
+  { phase: 'Reading documents', weight: 3 },
+  { phase: 'Summarizing', weight: 3 },
+  { phase: 'Scanning for repeated logos', weight: 2 },
+  { phase: 'Checking for changes', weight: 1 },
+  { phase: 'Rendering documents', weight: 5 },
+  { phase: 'Numbering documents', weight: 1 }
+]
+const TOTAL_WEIGHT = PHASE_WEIGHTS.reduce((s, p) => s + p.weight, 0)
+
+/** Map a phase + its in-phase progress to an overall 0–100 across the whole run. */
+function overallPct(phase: string, done: number, total: number): number {
+  const idx = PHASE_WEIGHTS.findIndex((p) => p.phase === phase)
+  if (idx < 0) return total > 0 ? Math.round((done / total) * 100) : 0 // unknown phase — fall back
+  let before = 0
+  for (let i = 0; i < idx; i++) before += PHASE_WEIGHTS[i].weight
+  const frac = total > 0 ? Math.min(1, done / total) : 0
+  return Math.round(((before + PHASE_WEIGHTS[idx].weight * frac) / TOTAL_WEIGHT) * 100)
+}
+
+/** Highest overall % shown for a run so far — the bar must never retreat within a run.
+ *  Cleared when the run ends (done/paused/error) so the next run starts fresh. */
+const progressFloor: Record<string, number> = {}
+
+/** Compute a smoothed ETA (ms) for the current phase from observed throughput. */
+function estimateEtaMs(collectionId: string, phase: string, done: number, total: number): number | undefined {
+  const now = Date.now()
+  let t = indexTiming[collectionId]
+  // Reset the anchor when the phase changes or progress rewinds (a new phase).
+  if (!t || t.phase !== phase || done < t.anchorDone) {
+    t = { phase, anchorTime: now, anchorDone: done }
+    indexTiming[collectionId] = t
+  }
+  const elapsed = now - t.anchorTime
+  const processed = done - t.anchorDone
+  if (processed <= 0 || elapsed < 400 || done >= total) return t.etaMs
+  const rate = processed / elapsed // files per ms
+  const raw = (total - done) / rate
+  // Exponential smoothing keeps the countdown from jittering between samples.
+  t.etaMs = t.etaMs == null ? raw : t.etaMs * 0.6 + raw * 0.4
+  return t.etaMs
+}
 
 /** Optimistically flip a set (and the open detail) to 'indexing' on re-run/resume,
  *  so the Pause/Resume buttons switch immediately instead of after the first event. */
@@ -80,6 +151,30 @@ interface IndexProgress {
   phase: string
   done: number
   total: number
+  /** Overall 0–100 across ALL phases of the run (continuous, monotonic) — for the bar. */
+  pct: number
+  /** Name of the file currently being processed (when known). */
+  currentFile?: string
+  /** Estimated milliseconds remaining for the current phase, smoothed (when known). */
+  etaMs?: number
+}
+
+/**
+ * A queued attachment include/exclude change, awaiting the next (manual) re-run.
+ * Re-running is a long operation, so toggles accumulate here instead of firing a
+ * render each — the user reviews the list and applies them all at once. Cleared
+ * when the run that applies them finishes.
+ */
+export interface PendingOp {
+  /** 'include' = will be produced; 'exclude' = will be set aside on the next run. */
+  kind: 'include' | 'exclude'
+  /** Display file name. */
+  file: string
+  /** The rule's scope: 'name' = every file of this name, 'file' = this exact file
+   *  (name + size). Undefined for an undo (removing a rule), which has no scope. */
+  scope?: 'file' | 'name'
+  /** Produced folder(s) an included/restored file lands in (when known). */
+  paths?: string[]
 }
 
 interface PendingPermission {
@@ -117,6 +212,8 @@ interface AppState {
   currentCollectionId: string | null
   collectionDetail: CollectionDetail | null
   indexProgress: Record<string, IndexProgress>
+  /** Per-collection queue of attachment changes awaiting the next manual re-run. */
+  pendingOps: Record<string, PendingOp[]>
   searchHits: LibrarySearchHit[] | null
 
   init: () => Promise<void>
@@ -137,6 +234,26 @@ interface AppState {
   clearSearch: () => void
   exportIndex: (format: 'xlsx' | 'docx') => Promise<void>
   exportHighlights: (format: 'csv' | 'xlsx') => Promise<void>
+  /** Replace the open collection's excluded-attachment filename list (applied on Re-run). */
+  setExcludedAttachments: (names: string[]) => Promise<void>
+  /** Replace the open collection's restored-attachment fingerprint list (applied on Re-run).
+   *  Optional record stores a display path for a "just this file" rule. */
+  setKeptAttachments: (fingerprints: string[], record?: { fp: string; path: string }) => Promise<void>
+  /** Replace the open collection's per-file exclude list (name|size fingerprints). */
+  setExcludedFingerprints: (fingerprints: string[], record?: { fp: string; path: string }) => Promise<void>
+  /** Replace the open collection's keep-by-name list. */
+  setKeptNames: (names: string[]) => Promise<void>
+  setFeatures: (features: ProcessFeatures) => Promise<void>
+  /** Export the open set's processing rules to a file. Returns a status for the UI. */
+  exportRules: () => Promise<{ ok: boolean; error?: string }>
+  /** Import processing rules from a file into the open set. Returns a status for the UI. */
+  importRules: () => Promise<{ ok: boolean; cancelled?: boolean; error?: string; ruleCount?: number }>
+  /** Queue an attachment include/exclude change for the open set's next re-run. */
+  queueAttachmentOp: (op: PendingOp) => void
+  /** Drop all queued attachment changes for a collection (e.g. after they're applied). */
+  clearAttachmentOps: (id: string) => void
+  /** Pick source folders/files and add them to the open set; resolves to how many were added. */
+  addSources: () => Promise<number>
   handleIndexEvent: (e: IndexEvent) => void
 
   openIntake: (workflowId: string) => void
@@ -173,6 +290,7 @@ export const useStore = create<AppState>((set, get) => ({
   currentCollectionId: null,
   collectionDetail: null,
   indexProgress: {},
+  pendingOps: {},
   searchHits: null,
 
   async init() {
@@ -305,6 +423,19 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
   async reindexCollection(id) {
+    // A run is already in flight (buildIndex drops a concurrent re-run): remember to
+    // re-run once it finishes so a change made mid-render still gets produced.
+    const c = get().collections.find((x) => x.id === id)
+    const busy = c?.status === 'indexing' || !!get().indexProgress[id]
+    if (busy) {
+      rerunWhenIdle.add(id)
+      return
+    }
+    rerunWhenIdle.delete(id)
+    // Don't start the run until a just-toggled Outputs change has been written to disk,
+    // or the run reads stale features and skips the newly-enabled deliverable.
+    const pending = pendingFeatureSave.get(id)
+    if (pending) await pending.catch(() => {})
     await window.api.library.reindex(id)
     markIndexing(get, set, id)
   },
@@ -331,6 +462,125 @@ export const useStore = create<AppState>((set, get) => ({
     set({ searchHits: hits })
   },
   clearSearch: () => set({ searchHits: null }),
+  async setExcludedAttachments(names) {
+    const id = get().currentCollectionId
+    if (!id) return
+    const detail = await window.api.library.setExcluded(id, names)
+    if (detail) {
+      set({ collectionDetail: detail })
+      // Keep the library card's copy in sync so re-runs read the new list.
+      set({ collections: get().collections.map((c) => (c.id === id ? { ...c, excludeAttachments: detail.excludeAttachments } : c)) })
+    }
+  },
+  async setKeptAttachments(fingerprints, record) {
+    const id = get().currentCollectionId
+    if (!id) return
+    const detail = await window.api.library.setKept(id, fingerprints, record)
+    if (detail) {
+      set({ collectionDetail: detail })
+      set({ collections: get().collections.map((c) => (c.id === id ? { ...c, keepAttachments: detail.keepAttachments, attachmentPaths: detail.attachmentPaths } : c)) })
+    }
+  },
+  async setExcludedFingerprints(fingerprints, record) {
+    const id = get().currentCollectionId
+    if (!id) return
+    const detail = await window.api.library.setExcludedFps(id, fingerprints, record)
+    if (detail) {
+      set({ collectionDetail: detail })
+      set({ collections: get().collections.map((c) => (c.id === id ? { ...c, excludeFingerprints: detail.excludeFingerprints, attachmentPaths: detail.attachmentPaths } : c)) })
+    }
+  },
+  async setKeptNames(names) {
+    const id = get().currentCollectionId
+    if (!id) return
+    const detail = await window.api.library.setKeptNames(id, names)
+    if (detail) {
+      set({ collectionDetail: detail })
+      set({ collections: get().collections.map((c) => (c.id === id ? { ...c, keepNames: detail.keepNames } : c)) })
+    }
+  },
+  async setFeatures(features) {
+    const id = get().currentCollectionId
+    if (!id) return
+    // Record the save so a fast Re-run waits for it (see pendingFeatureSave).
+    const p = window.api.library.setFeatures(id, features)
+    pendingFeatureSave.set(id, p)
+    try {
+      const detail = await p
+      if (detail) {
+        set({ collectionDetail: detail })
+        set({ collections: get().collections.map((c) => (c.id === id ? { ...c, features: detail.features } : c)) })
+      }
+    } finally {
+      if (pendingFeatureSave.get(id) === p) pendingFeatureSave.delete(id)
+    }
+  },
+  async exportRules() {
+    const id = get().currentCollectionId
+    if (!id) return { ok: false, error: 'No set open.' }
+    const res = await window.api.library.exportRules(id)
+    // A user-cancelled save dialog isn't worth a toast.
+    if (res.ok) set({ toast: `Rules exported to ${res.path}` })
+    else if (res.error && res.error !== 'Cancelled.') set({ toast: `Export failed: ${res.error}` })
+    return { ok: res.ok, error: res.ok ? undefined : res.error }
+  },
+  async importRules() {
+    const id = get().currentCollectionId
+    if (!id) return { ok: false, error: 'No set open.' }
+    const res = await window.api.library.importRules(id)
+    if (res.ok && res.detail) {
+      const detail = res.detail
+      set({ collectionDetail: detail })
+      set({ collections: get().collections.map((c) => (c.id === id ? { ...c, features: detail.features } : c)) })
+      set({ toast: `Rules imported — ${res.ruleCount ?? 0} attachment rule${res.ruleCount === 1 ? '' : 's'}. Re-run to apply.` })
+    } else if (!res.cancelled && res.error) {
+      set({ toast: `Import failed: ${res.error}` })
+    }
+    return { ok: res.ok, cancelled: res.cancelled, error: res.error, ruleCount: res.ruleCount }
+  },
+  queueAttachmentOp(op) {
+    const id = get().currentCollectionId
+    if (!id) return
+    const cur = get().pendingOps[id] ?? []
+    const key = op.file.toLowerCase()
+    // Two ops collide (replace/cancel) only when they act on the same target: a plain
+    // undo (no scope) cancels any queued op for that filename, but a scoped op collides
+    // only with the same scope. This keeps "keep just this file" (scope 'file') from
+    // cancelling a separate "exclude all named" (scope 'name') for the same filename —
+    // they're different rules and both belong in the pending list.
+    const collides = (o: PendingOp): boolean =>
+      o.file.toLowerCase() === key && (!op.scope || !o.scope || o.scope === op.scope)
+    // A toggle back to the opposite direction cancels the queued op (no net change). When
+    // a filename carries two ops (e.g. "exclude all named" + "keep just this file"), a
+    // scope-less undo collides with both — so prefer cancelling an opposite-kind op (the
+    // real undo) before falling back to refreshing a same-kind one. Otherwise it's new.
+    const opposite = cur.find((o) => collides(o) && o.kind !== op.kind)
+    const prior = opposite ?? cur.find(collides)
+    const next = opposite
+      ? cur.filter((o) => o !== opposite)
+      : prior
+        ? cur.map((o) => (o === prior ? op : o))
+        : [...cur, op]
+    set({ pendingOps: { ...get().pendingOps, [id]: next } })
+  },
+  clearAttachmentOps(id) {
+    if (!get().pendingOps[id]) return
+    const next = { ...get().pendingOps }
+    delete next[id]
+    set({ pendingOps: next })
+  },
+  async addSources() {
+    const id = get().currentCollectionId
+    if (!id) return 0
+    const picked = await window.api.library.pickSources()
+    if (!picked.length) return 0
+    const before = get().collectionDetail?.folders.length ?? 0
+    const detail = await window.api.library.addSources(id, picked)
+    if (!detail) return 0
+    set({ collectionDetail: detail })
+    set({ collections: get().collections.map((c) => (c.id === id ? { ...c, folders: detail.folders } : c)) })
+    return detail.folders.length - before
+  },
   async exportIndex(format) {
     const id = get().currentCollectionId
     if (!id) return
@@ -346,7 +596,11 @@ export const useStore = create<AppState>((set, get) => ({
   handleIndexEvent(e) {
     const ip = { ...get().indexProgress }
     if (e.type === 'index-progress') {
-      ip[e.collectionId] = { phase: e.phase, done: e.done, total: e.total }
+      const etaMs = estimateEtaMs(e.collectionId, e.phase, e.done, e.total)
+      // One continuous bar: clamp the overall % so a new phase never rewinds it.
+      const pct = Math.max(overallPct(e.phase, e.done, e.total), progressFloor[e.collectionId] ?? 0)
+      progressFloor[e.collectionId] = pct
+      ip[e.collectionId] = { phase: e.phase, done: e.done, total: e.total, currentFile: e.currentFile, etaMs, pct }
       set({ indexProgress: ip })
       // Stream freshly-indexed docs into the open set (throttled) so the list fills in live.
       if (get().currentCollectionId === e.collectionId && Date.now() - lastDetailRefresh > 900) {
@@ -357,13 +611,31 @@ export const useStore = create<AppState>((set, get) => ({
       }
     } else if (e.type === 'index-done') {
       delete ip[e.collectionId]
-      set({ indexProgress: ip })
-      void get().refreshCollections()
-      if (get().currentCollectionId === e.collectionId) {
-        void window.api.library.get(e.collectionId).then((detail) => set({ collectionDetail: detail }))
+      delete indexTiming[e.collectionId]
+      delete progressFloor[e.collectionId]
+      // The run that just finished applied any queued attachment changes — clear them.
+      const pendingOps = { ...get().pendingOps }
+      delete pendingOps[e.collectionId]
+      set({ indexProgress: ip, pendingOps })
+      // An exclude/restore toggle landed mid-render — the run that just finished didn't
+      // include it, so immediately run once more so the output + index catch up. Skip
+      // the idle refresh (we're not idle), else its async status write would race the
+      // re-run's optimistic 'indexing' flip and briefly show the set as done.
+      if (rerunWhenIdle.has(e.collectionId)) {
+        rerunWhenIdle.delete(e.collectionId)
+        void window.api.library.reindex(e.collectionId)
+        markIndexing(get, set, e.collectionId)
+      } else {
+        void get().refreshCollections()
+        if (get().currentCollectionId === e.collectionId) {
+          void window.api.library.get(e.collectionId).then((detail) => set({ collectionDetail: detail }))
+        }
       }
     } else if (e.type === 'index-paused') {
       delete ip[e.collectionId]
+      delete indexTiming[e.collectionId]
+      delete progressFloor[e.collectionId]
+      rerunWhenIdle.delete(e.collectionId)
       set({ indexProgress: ip })
       void get().refreshCollections()
       if (get().currentCollectionId === e.collectionId) {
@@ -371,6 +643,9 @@ export const useStore = create<AppState>((set, get) => ({
       }
     } else if (e.type === 'index-error') {
       delete ip[e.collectionId]
+      delete indexTiming[e.collectionId]
+      delete progressFloor[e.collectionId]
+      rerunWhenIdle.delete(e.collectionId)
       set({ indexProgress: ip, toast: `Indexing failed: ${e.message}` })
       void get().refreshCollections()
     }

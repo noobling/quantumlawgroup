@@ -86,6 +86,29 @@ export function highlightRows(docs: Pick<IndexedDoc, 'name' | 'highlights'>[]): 
   return rows
 }
 
+/** Entries present in exactly one of two lists — i.e. whose membership flipped. */
+export function symmetricDiff(prev: string[], cur: string[]): Set<string> {
+  const a = new Set(prev)
+  const b = new Set(cur)
+  return new Set([...a, ...b].filter((x) => a.has(x) !== b.has(x)))
+}
+
+/**
+ * Whether an exclude/restore change touches THIS doc, given its attachment fingerprints
+ * (name|size) and the names/fingerprints whose exclude/keep state flipped this run. A doc
+ * with no recorded keys (pre-feature manifest) is treated as affected when anything
+ * changed, so it re-renders once rather than risk a stale output.
+ */
+export function docExcludeAffected(
+  attKeys: string[] | undefined,
+  changedExclNames: Set<string>,
+  changedKeepFps: Set<string>
+): boolean {
+  if (changedExclNames.size === 0 && changedKeepFps.size === 0) return false
+  if (attKeys == null) return true
+  return attKeys.some((k) => changedExclNames.has(k.slice(0, k.lastIndexOf('|'))) || changedKeepFps.has(k))
+}
+
 // Two copies of a same-named attachment count as "the same" document when their
 // sizes are within this tolerance — exact bytes needn't match, since a re-encode or
 // an embedded timestamp shifts a few bytes (or none) without changing the document.
