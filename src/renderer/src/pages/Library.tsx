@@ -242,8 +242,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [loadFile, setLoadFile] = useState(false)
   const [highlights, setHighlights] = useState(false)
   const [aiEnrich, setAiEnrich] = useState(false)
-  const [separate, setSeparate] = useState(false)
-  const [itemNumbering, setItemNumbering] = useState(false)
+  const [combine, setCombine] = useState(false)
   const [excludeSignatures, setExcludeSignatures] = useState(false)
   const [excludeAttachmentsText, setExcludeAttachmentsText] = useState('')
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
@@ -271,8 +270,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
       setHighlights(!!rules.features.highlights)
       setAiEnrich(!!rules.features.aiEnrich)
     }
-    if ('separateAttachments' in rules) setSeparate(!!rules.separateAttachments)
-    if ('itemNumbering' in rules) setItemNumbering(!!rules.itemNumbering)
+    if ('combineAttachments' in rules) setCombine(!!rules.combineAttachments)
     if ('excludeSignatures' in rules) setExcludeSignatures(!!rules.excludeSignatures)
     if (rules.bates) {
       setBatesPrefix(rules.bates.prefix ?? 'DOC-')
@@ -328,9 +326,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
       output: wantsOutput ? outputValue.trim() || undefined : undefined,
       features,
       bates: wantsBates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : undefined,
-      combineAttachments: true,
-      separateAttachments: separate,
-      itemNumbering,
+      combineAttachments: combine,
       excludeSignatures,
       excludeAttachments: excludeAttachmentsText
         .split('\n')
@@ -472,17 +468,10 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
         {wantsBates && (
           <div className="mt-4 rounded-lg border border-ink-700/70 bg-ink-900/40 p-3 space-y-2.5">
             <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
-              <input type="checkbox" checked={separate} onChange={(e) => setSeparate(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
+              <input type="checkbox" checked={combine} onChange={(e) => setCombine(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
               <span>
-                Also save attachments as separate files
-                <span className="text-ink-600"> · off by default — each email’s attachments are always merged onto the end of its PDF; this also writes them as native files beside it</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
-              <input type="checkbox" checked={itemNumbering} onChange={(e) => setItemNumbering(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
-              <span>
-                Prefix documents with an item number
-                <span className="text-ink-600"> · numbers each family in order, e.g. <span className="font-mono text-slate-400">0001 - Smith Contract.pdf</span></span>
+                Combine attachments into one PDF (legacy)
+                <span className="text-ink-600"> · off by default — each attachment becomes its own Bates-numbered document (the e-discovery standard); on merges them into one family PDF sharing the email’s Bates span</span>
               </span>
             </label>
             <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">

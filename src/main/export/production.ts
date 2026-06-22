@@ -56,26 +56,33 @@ interface ExcludedMeta {
   size: number
 }
 
-/** A produced document remembered across runs: its row data + input file state. */
-interface ProdItem extends ProdRecord {
+/** A produced source document remembered across runs: its input file state + the FAMILY of
+ *  Bates-numbered records it produced. In the standard mode an email yields several records —
+ *  the email itself plus one per kept attachment (each its own Bates document); a standalone
+ *  document yields a single record. `records[0]` is always the family head. */
+interface ProdItem {
   id: string
   path: string
   mtime: number
   size: number
+  /** The produced Bates documents from this source, in order: [head, ...attachment children]. */
+  records: ProdRecord[]
+  /** Total Bates numbers the whole family consumes (sum of every member's span) — what the
+   *  numbering pass advances by, so attachment Bates stay contiguous within the family. */
+  familySpan: number
   /** Excluded attachments this doc contributed — so counts stay correct on re-runs. */
   excluded?: ExcludedMeta[]
   /** Content keys (sha256) of this doc's non-embedded attachments — so an exclude/restore
    *  change (resolved to sha) can re-render only the docs it actually touches. */
   attKeys?: string[]
-  /** Basenames this item wrote into its folder this run (the PDF + any separately-saved
-   *  native attachments). The sweep keeps exactly these and removes anything else in the
-   *  folder, so renamed/now-excluded/embedded-only files don't linger across runs. */
+  /** Basenames this item wrote into its family folder this run (PDFs + native attachments).
+   *  The sweep keeps exactly these and removes anything else, so renamed/now-excluded files
+   *  don't linger across runs. */
   files?: string[]
-  /** Sequential per-family item number (1-based) when item numbering is on, else 0. Stored
-   *  so a re-run can tell when the number shifted (a doc was added/removed earlier) and the
-   *  filename prefix must be re-written. */
-  itemNo?: number
 }
+
+/** The family head — the email/document record (vs. its attachment children). */
+const headRec = (it: ProdItem): ProdRecord => it.records[0]
 
 /** An attachment filtered out of the production (by content), kept for review. */
 interface ExcludedAtt extends ExcludedMeta {
@@ -102,10 +109,84 @@ type ExclusionSets = {
 /** Render-time options (no Bates — numbering is decided later, in order). */
 type RenderOpts = ExclusionSets & {
   convert: boolean
+  /** LEGACY: merge attachments into one family PDF sharing a single Bates span. */
   combine: boolean
-  /** Also write kept attachments as separate native files beside the PDF. When combine
-   *  is off this is forced on (else the attachments would be lost). */
-  separate: boolean
+  /** STANDARD: render each kept attachment as its OWN Bates-numbered document (an imaged
+   *  PDF, or a slip-sheet + native), in family order after the email. On when not combining
+   *  AND Bates are being assigned (a per-document number is the whole point). */
+  perAtt: boolean
+}
+
+/** A non-native file type produced in its ORIGINAL format with a Bates-stamped slip-sheet
+ *  standing in for it, rather than imaged — flattening these to PDF loses meaning. */
+const NATIVE_PREFERRED = new Set(['.xlsx', '.xls', '.xlsm', '.xlsb'])
+
+let attRenderSeq = 0
+/** Render an in-memory attachment buffer to a PDF by writing it to a temp file and reusing
+ *  the document renderer (handles PDF passthrough, images, Word, text/CSV). Returns null for
+ *  a type it can't render, so the caller falls back to a native file + slip-sheet. */
+async function renderAttachmentToPdf(
+  win: ReturnType<typeof makeRenderWindow>,
+  name: string,
+  content: Buffer
+): Promise<Buffer | null> {
+  const ext = path.extname(name).toLowerCase()
+  const tmp = path.join(os.tmpdir(), `dsl-att-${process.pid}-${attRenderSeq++}${ext}`)
+  await fs.writeFile(tmp, content)
+  try {
+    return await renderDocToPdf(win, tmp)
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => {})
+  }
+}
+
+/** One kept attachment rendered as its own Bates-numbered document. */
+type RenderedAtt = {
+  /** Original attachment filename (used for naming + the load file). */
+  name: string
+  /** The page(s) that carry the Bates stamp: the imaged attachment, or a slip-sheet. */
+  pdf: Buffer
+  /** Page count of `pdf` (its Bates span); 1 for a slip-sheet. */
+  pages: number
+  /** Whether `pdf` is a placeholder slip-sheet (the real content is the native file). */
+  slip: boolean
+  /** The original file to also produce alongside the PDF — kept for fidelity AND so the
+   *  content-based exclusion workflow still matches on the native's name|size|dHash. Omitted
+   *  only when the produced PDF already IS the native losslessly (a .pdf attachment). */
+  native?: Buffer
+  /** sha256 of the content — keys the dHash decoration on the produced native file. */
+  sha: string
+}
+
+/** Turn one kept attachment into its own Bates document: imaged to PDF for clean types,
+ *  or a slip-sheet + native for spreadsheets/media/unknown (and on any render failure). */
+async function renderAttachment(
+  win: ReturnType<typeof makeRenderWindow>,
+  a: { filename?: string; content: Buffer },
+  result: ProductionResult
+): Promise<RenderedAtt> {
+  const name = a.filename || 'attachment'
+  const ext = path.extname(name).toLowerCase()
+  const content = a.content
+  const sha = sha256(content)
+  let pdf: Buffer | null = null
+  if (!NATIVE_PREFERRED.has(ext)) {
+    try {
+      pdf = await renderAttachmentToPdf(win, name, content)
+    } catch (e) {
+      result.errors.push({ file: name, error: `attachment render failed, slip-sheeted: ${(e as Error).message}` })
+    }
+  }
+  if (pdf) {
+    const pages = await pageCount(pdf).catch(() => 1)
+    // A .pdf attachment's produced PDF IS its native — no separate copy needed; everything
+    // else keeps the native beside the imaged page.
+    const native = ext === '.pdf' ? undefined : content
+    return { name, pdf, pages, slip: false, native, sha }
+  }
+  const slip = await slipSheet(name)
+  result.slipSheets++
+  return { name, pdf: slip, pages: 1, slip: true, native: content, sha }
 }
 
 /**
@@ -132,10 +213,18 @@ type Rendered = {
   attCount: number
   attNames: string
   attKeys: string[]
+  /** Loose native files to write beside the PDF WITHOUT their own Bates number — used in the
+   *  legacy combine mode (attachments merged into the family PDF) and for slip-sheeted doc
+   *  natives. In the standard per-attachment-Bates mode this stays empty (see `atts`). */
   attachments: { name: string; content: Buffer }[]
+  /** STANDARD mode: each kept attachment as its own Bates-numbered document, in family order
+   *  after the email. Empty in combine/native mode. */
+  atts: RenderedAtt[]
   excludedMeta: ExcludedMeta[]
-  /** Absolute target folder for the produced PDF + its attachments. */
-  folder: string
+  /** Parent folder the family lands under (Documents/<source-path>). The final folder is the
+   *  email's Bates-named family subfolder when it has attachments, else this directly —
+   *  decided in writeRendered, since the folder name needs the assigned Bates. */
+  folderParent: string
   /** Base name (no extension) for the produced PDF. */
   base: string
 }
@@ -162,7 +251,8 @@ async function renderOne(
   const docsRoot = path.join(outRoot, 'Documents')
   const docType = doc.docType || (doc.kind === 'email' ? 'Email' : 'Document')
   const excludedMeta: ExcludedMeta[] = []
-  const base0 = { doc, rel, from: '', to: '', cc: '', subject: '', date: '', docType, attCount: 0, attNames: '', attKeys: [] as string[], excludedMeta }
+  const folderParent = path.join(docsRoot, relDir)
+  const base0 = { doc, rel, from: '', to: '', cc: '', subject: '', date: '', docType, attCount: 0, attNames: '', attKeys: [] as string[], excludedMeta, atts: [] as RenderedAtt[], folderParent }
 
   // Native production: copy the original verbatim later; only gather metadata here.
   // Render-time filtering (signatures, excluded attachments) doesn't apply — the
@@ -183,11 +273,10 @@ async function renderOne(
         attCount: atts.length,
         attNames: atts.map((a) => a.filename || 'attachment').join('; '),
         attachments: [],
-        folder: path.join(docsRoot, relDir),
         base
       }
     }
-    return { ...base0, native: true, pages: 0, subject: doc.title || base, date: doc.date || '', attachments: [], folder: path.join(docsRoot, relDir), base }
+    return { ...base0, native: true, pages: 0, subject: doc.title || base, date: doc.date || '', attachments: [], base }
   }
 
   // Assigned on every path below (rendered PDF, slip-sheet, or native doc render); the
@@ -203,8 +292,8 @@ async function renderOne(
   // Content keys (sha256) of this doc's non-embedded attachments — lets a re-run tell
   // whether an exclude/restore change actually touches this doc.
   let attKeys: string[] = []
-  let folder: string
   const attachments: { name: string; content: Buffer }[] = []
+  const atts: RenderedAtt[] = []
 
   if (ext === '.eml') {
     const mail = await simpleParser(await fs.readFile(doc.path))
@@ -251,17 +340,17 @@ async function renderOne(
     // Content keys (sha256) of this doc's non-embedded attachments — lets a re-run tell
     // whether a changed exclusion decision (resolved to sha) actually touches this doc.
     attKeys = [...built.fileAttachments, ...built.excludedAttachments].map((a) => sha256(a.content ?? Buffer.alloc(0)))
-    // Attachments are always merged into the email PDF; they're ALSO written as separate
-    // native files only when asked (separate). When not, they live inside the PDF alone —
-    // the sweep removes any loose copy a prior "separate" run left behind.
-    const writeNative = opts.separate || !opts.combine
-    if (writeNative) for (const a of built.fileAttachments) attachments.push({ name: a.filename || 'attachment', content: a.content })
-    // An email with attachments gets its own folder (PDF + native files together).
-    folder = attCount > 0 ? path.join(docsRoot, relDir, base) : path.join(docsRoot, relDir)
+    // STANDARD (per-attachment Bates): render each kept attachment as its own document, in
+    // family order. Otherwise LEGACY combine: attachments are merged into the email PDF above
+    // and ALSO written as loose native files (so they're browsable), as before.
+    if (opts.perAtt) {
+      for (const a of built.fileAttachments) atts.push(await renderAttachment(win, { filename: a.filename, content: a.content }, result))
+    } else {
+      for (const a of built.fileAttachments) attachments.push({ name: a.filename || 'attachment', content: a.content })
+    }
   } else {
     subject = doc.title || base
     date = doc.date || ''
-    folder = path.join(docsRoot, relDir)
     let rendered = await renderDocToPdf(win, doc.path)
     if (!rendered) {
       rendered = await slipSheet(doc.name)
@@ -276,7 +365,7 @@ async function renderOne(
   }
 
   const pages = await pageCount(pdf).catch(() => 1)
-  return { doc, rel, native: false, pdf, pages, from, to, cc, subject, date, docType, attCount, attNames, attKeys, attachments, excludedMeta, folder, base }
+  return { doc, rel, native: false, pdf, pages, from, to, cc, subject, date, docType, attCount, attNames, attKeys, attachments, atts, excludedMeta, folderParent, base }
 }
 
 /**
@@ -297,7 +386,7 @@ async function renderOne(
  */
 export async function sweepStaleOutputs(outRoot: string, items: ProdItem[]): Promise<void> {
   const docsRoot = path.join(outRoot, 'Documents')
-  const folderOf = (it: ProdItem): string => path.dirname(path.join(outRoot, it.fileRel))
+  const folderOf = (it: ProdItem): string => path.dirname(path.join(outRoot, headRec(it).fileRel))
   const itemFolders = new Set(items.map((it) => folderOf(it).toLowerCase()))
   // Allowed basenames per folder = exactly what this run wrote there. A folder with any
   // pre-tracking item is marked untracked and skipped entirely.
@@ -376,9 +465,10 @@ export function dedupePdfExt(name: string): string {
  * if the source is missing or the target name is already taken.
  */
 async function fixDoubledPdfName(outRoot: string, item: ProdItem): Promise<ProdItem> {
-  const fixed = dedupePdfExt(item.fileRel)
-  if (fixed === item.fileRel) return item
-  const from = path.join(outRoot, item.fileRel)
+  const head = headRec(item)
+  const fixed = dedupePdfExt(head.fileRel)
+  if (fixed === head.fileRel) return item
+  const from = path.join(outRoot, head.fileRel)
   const to = path.join(outRoot, fixed)
   try {
     if (await fs.stat(to).then(() => true).catch(() => false)) return item // don't clobber
@@ -386,13 +476,29 @@ async function fixDoubledPdfName(outRoot: string, item: ProdItem): Promise<ProdI
   } catch {
     return item // source gone or rename failed — keep the original path
   }
-  return { ...item, fileRel: fixed }
+  return { ...item, records: [{ ...head, fileRel: fixed }, ...item.records.slice(1)] }
+}
+
+/** Prefix a produced filename with its Bates number — `DEF000126 - drawing.pdf` — the
+ *  e-discovery convention (the Bates number IS the document identifier). Falls back to the
+ *  bare name when Bates aren't assigned. */
+export function batesPrefixName(bates: string, base: string): string {
+  return bates ? `${bates} - ${base}` : base
+}
+
+/** The produced PDF name for an imaged attachment: the original base name (its extension
+ *  dropped, since it's now a PDF) + `.pdf` — e.g. `image004.png` → `image004.pdf`. Sanitised
+ *  so a name with Windows-illegal characters (e.g. a colon from a timestamp) can't break the
+ *  write on the ship target. */
+function attPdfName(name: string): string {
+  return safeName(path.basename(name, path.extname(name))) + '.pdf'
 }
 
 /**
- * Bates-stamp a rendered document at `batesStart` and write it (and its attachments)
- * to disk. Sequential — `batesStart` depends on every document before it. Returns the
- * index row plus the data a re-run needs to decide reuse.
+ * Bates-stamp a rendered FAMILY at `batesStart` and write it to disk: the email/document,
+ * then (in the standard mode) each kept attachment as its OWN consecutively-numbered Bates
+ * document, in family order. Sequential — `batesStart` depends on every document before it.
+ * Returns every produced record (head + children) plus the data a re-run needs for reuse.
  */
 async function writeRendered(
   r: Rendered,
@@ -402,79 +508,99 @@ async function writeRendered(
   assignBates: boolean,
   used: Set<string>,
   result: ProductionResult,
-  /** Item-number prefix prepended to every produced filename (e.g. `0001 - `); '' when off. */
-  itemPrefix: string,
   /** sha256 → { perceptual key, is-image }, so produced IMAGE attachments can carry their
    *  similarity key in the name, like the Excluded/ folder does (non-images stay clean). */
   attKeyBySha: Map<string, { dh: string | null; img: boolean }>
-): Promise<{ rec: ProdRecord; excludedMeta: ExcludedMeta[]; attKeys: string[]; files: string[] }> {
+): Promise<{ records: ProdRecord[]; excludedMeta: ExcludedMeta[]; attKeys: string[]; files: string[]; familySpan: number }> {
   const batesLabel = (n: number): string => prefix + String(n).padStart(PAD, '0')
-  await fs.mkdir(r.folder, { recursive: true })
-  // Claim a collision-free name in the folder, recording it in `used`. The item prefix is
-  // applied first so a family's files share it; `_` only disambiguates a true clash.
-  const claim = (base: string): string => {
-    let name = itemPrefix + base
-    while (used.has(path.join(r.folder, name).toLowerCase())) name = '_' + name
-    used.add(path.join(r.folder, name).toLowerCase())
-    return name
+  // The family folder is named by the email's (head's) Bates when it has attachments, so the
+  // whole family is traceable from the folder name; a doc / attachment-less email stays flat.
+  const headBeg = assignBates ? batesLabel(batesStart) : ''
+  const hasFamily = !r.native && r.attCount > 0
+  const folder = hasFamily ? path.join(r.folderParent, batesPrefixName(headBeg, safeName(r.base))) : r.folderParent
+  await fs.mkdir(folder, { recursive: true })
+  // Claim a collision-free name in the folder, recording it in `used`; `_` disambiguates a
+  // true clash (two attachments that reduce to the same Bates-prefixed name).
+  const claim = (name: string): string => {
+    let n = name
+    while (used.has(path.join(folder, n).toLowerCase())) n = '_' + n
+    used.add(path.join(folder, n).toLowerCase())
+    return n
   }
+  const files: string[] = []
+  const records: ProdRecord[] = []
 
   if (r.native) {
-    const name = claim(safeName(r.doc.name))
-    const outPath = path.join(r.folder, name)
+    const name = claim(batesPrefixName(headBeg, safeName(r.doc.name)))
+    const outPath = path.join(folder, name)
     await fs.copyFile(r.doc.path, outPath)
-    const beg = assignBates ? batesLabel(batesStart) : ''
-    const rec: ProdRecord = { begBates: beg, endBates: beg, pages: 0, batesSpan: 1, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, outPath), attCount: r.attCount, attNames: r.attNames }
-    return { rec, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files: [name] }
+    const beg = headBeg
+    records.push({ begBates: beg, endBates: beg, pages: 0, batesSpan: 1, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, outPath), attCount: r.attCount, attNames: r.attNames })
+    return { records, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files: [name], familySpan: 1 }
   }
 
+  let cursor = batesStart
+  // --- Head: the email / standalone document ---
   let pdf = r.pdf as Buffer
-  const attachments = [...r.attachments]
-  // Bates-stamp; a passthrough PDF that can't be loaded (encrypted/corrupt) falls
-  // back to a slip sheet so the sequence stays intact.
-  let pages = 0
+  const looseNatives = [...r.attachments]
+  let pages = r.pages
   let begBates = ''
   let endBates = ''
   if (assignBates) {
     try {
-      const s = await stampBates(pdf, batesStart, prefix, PAD)
+      const s = await stampBates(pdf, cursor, prefix, PAD)
       pdf = s.bytes
       begBates = s.begin
       endBates = s.end
       pages = s.pages
     } catch {
+      // A passthrough PDF that can't be loaded (encrypted/corrupt) falls back to a slip sheet
+      // so the sequence stays intact; the native is produced beside it.
       const slip = await slipSheet(r.doc.name)
       result.slipSheets++
-      if (!attachments.some((a) => a.name === r.doc.name)) attachments.push({ name: r.doc.name, content: await fs.readFile(r.doc.path) })
-      const s = await stampBates(slip, batesStart, prefix, PAD)
+      if (!looseNatives.some((a) => a.name === r.doc.name)) looseNatives.push({ name: r.doc.name, content: await fs.readFile(r.doc.path) })
+      const s = await stampBates(slip, cursor, prefix, PAD)
       pdf = s.bytes
       begBates = s.begin
       endBates = s.end
       pages = s.pages
     }
   }
-
-  const files: string[] = []
-  const pdfName = claim(pdfFileName(r.base))
+  const pdfName = claim(batesPrefixName(begBates, pdfFileName(safeName(r.base))))
   files.push(pdfName)
-  const outPath = path.join(r.folder, pdfName)
-  await fs.writeFile(outPath, pdf)
+  await fs.writeFile(path.join(folder, pdfName), pdf)
+  records.push({ begBates, endBates, pages, batesSpan: pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, path.join(folder, pdfName)), attCount: r.attCount, attNames: r.attNames })
+  cursor += pages
 
-  for (const a of attachments) {
-    // Decorate genuine email attachments with their size + similarity key (dh=…), matching
-    // the Excluded/ folder so you can eyeball why two attachments do or don't match. The
-    // file tree strips this decoration when computing fingerprints, so exclude/keep still
-    // work. Document natives (slip-sheet/spreadsheet copies) keep their real name.
+  // --- Loose natives (legacy combine companions / slip-sheeted doc natives) — no own Bates. ---
+  for (const a of looseNatives) {
     const safe = safeName(a.name)
     const k = r.doc.kind === 'email' ? attKeyBySha.get(sha256(a.content)) : undefined
-    const base = k?.img ? decorateAttKey(safe, a.content.length, k.dh) : safe
-    const n = claim(base)
-    files.push(n)
-    await fs.writeFile(path.join(r.folder, n), a.content)
+    const name = claim(k?.img ? decorateAttKey(safe, a.content.length, k.dh) : safe)
+    files.push(name)
+    await fs.writeFile(path.join(folder, name), a.content)
   }
 
-  const rec: ProdRecord = { begBates, endBates, pages, batesSpan: pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, outPath), attCount: r.attCount, attNames: r.attNames }
-  return { rec, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files }
+  // --- Attachment children: each its own Bates document (imaged PDF / slip), in order. ---
+  for (const att of r.atts) {
+    const s = await stampBates(att.pdf, cursor, prefix, PAD)
+    const childPdfName = claim(batesPrefixName(s.begin, attPdfName(att.name)))
+    files.push(childPdfName)
+    await fs.writeFile(path.join(folder, childPdfName), s.bytes)
+    // Produce the native alongside (when not a passthrough PDF) so fidelity is preserved AND
+    // the content-based exclusion workflow keeps matching on the native's name|size|dHash.
+    if (att.native) {
+      const safe = safeName(att.name)
+      const k = attKeyBySha.get(att.sha)
+      const nativeName = claim(batesPrefixName(s.begin, k?.img ? decorateAttKey(safe, att.native.length, k.dh) : safe))
+      files.push(nativeName)
+      await fs.writeFile(path.join(folder, nativeName), att.native)
+    }
+    records.push({ begBates: s.begin, endBates: s.end, pages: s.pages, batesSpan: s.pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: att.name, docType: 'Attachment', kind: 'doc', fileRel: path.relative(outRoot, path.join(folder, childPdfName)), attCount: 0, attNames: '' })
+    cursor += s.pages
+  }
+
+  return { records, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files, familySpan: cursor - batesStart }
 }
 
 /**
@@ -1058,12 +1184,12 @@ export async function buildProduction(
   let batesNext = bates?.start ?? 1
   const label = (n: number): string => prefix + String(n).padStart(PAD, '0')
 
-  // Item numbering: one sequential, zero-padded number per family (= per produced document),
-  // prefixed onto every file the family writes (e.g. `0001 - Smith.pdf`). Opt-in; the width
-  // is set by the document count (min 4 digits) so the numbers sort correctly in a listing.
-  const itemNumbering = !!collection.itemNumbering
-  const itemPad = Math.max(4, String(targets.length).length)
-  const itemPrefixFor = (n: number): string => (itemNumbering ? String(n).padStart(itemPad, '0') + ' - ' : '')
+  // Attachment handling. STANDARD (default): each kept attachment is produced as its own
+  // Bates-numbered document, in family order after the email — needs Bates to be assigned (a
+  // per-document number is the whole point). LEGACY combine (opt-in): attachments are merged
+  // into one family PDF sharing the email's single Bates span.
+  const combine = !!collection.combineAttachments
+  const perAtt = !combine && assignBates
 
   // Mirror the input layout in the output: a file under source folder "<root>"
   // lands at Documents/<root-name>/<path-within-root>, so the produced bundle keeps
@@ -1100,11 +1226,11 @@ export async function buildProduction(
   // affected content, so they invalidate per-doc (below). keepNames IS here (name-scoped,
   // can't be diffed against content keys, and changes rarely): a change re-renders all.
   const configKey = JSON.stringify({
-    combine: true, // attachments are always merged into the email PDF now
+    combine, // legacy one-PDF families vs. the per-attachment-Bates default
+    perAtt, // each attachment its own Bates document — changes naming + numbering
+    perAttBates: 2, // structural version of the per-attachment Bates layout (bump to re-render all)
     attKeyInName: 1, // produced attachment files carry their size+dHash in the name (bump to re-render)
     dhashV: DHASH_VERSION, // a dHash-algorithm change refreshes the size+dHash decoration on produced files
-    separate: !!collection.separateAttachments,
-    itemNumbering: !!collection.itemNumbering, // changes produced filenames → re-render all
     excludeSignatures: !!collection.excludeSignatures,
     keepNames: [...keepNames].sort(),
     bates: collection.bates ?? null,
@@ -1144,7 +1270,7 @@ export async function buildProduction(
   // Reused emails that carry attachments — we re-collect their excluded attachments
   // (parse only, no render) when the Excluded/ folder needs rebuilding.
   const reusedWithAtts: { doc: IndexedDoc; rel: string }[] = []
-  const renderOpts: RenderOpts = { ...exclOpts, convert, combine: true, separate: !!collection.separateAttachments }
+  const renderOpts: RenderOpts = { ...exclOpts, convert, combine, perAtt }
 
   // Numbering (Bates) is strictly sequential — each document's number depends on the
   // page count of every document before it — but RENDERING (the slow part) is not.
@@ -1157,7 +1283,7 @@ export async function buildProduction(
   for (const doc of targets) {
     const prev = prevById.get(doc.id)
     const contentReuse =
-      !!prev && prev.mtime === doc.modifiedAt && prev.size === doc.size && !docAffected(prev) && (await outputExists(prev.fileRel))
+      !!prev && prev.mtime === doc.modifiedAt && prev.size === doc.size && !docAffected(prev) && (await outputExists(headRec(prev).fileRel))
     plans.push({ doc, rel: relFor(doc.path), prev, contentReuse })
   }
 
@@ -1179,17 +1305,16 @@ export async function buildProduction(
 
   // Phase 3 — a content-unchanged document still needs a fresh stamp if an earlier
   // document changed page count and pushed its Bates number along. Walk in order with
-  // predicted page spans to find those shifted documents.
-  const spanOf = (p: Plan): number =>
-    p.contentReuse ? p.prev?.batesSpan ?? p.prev?.pages ?? 0 : rendered.get(p.doc.id)?.pages ?? 0
+  // predicted FAMILY spans (email + every attachment document) to find the shifted ones.
+  const renderedSpan = (r?: Rendered): number => (!r ? 0 : r.native ? 1 : r.pages + r.atts.reduce((s, a) => s + a.pages, 0))
+  const spanOf = (p: Plan): number => (p.contentReuse ? p.prev?.familySpan ?? 0 : renderedSpan(rendered.get(p.doc.id)))
   const shifted: Plan[] = []
   let planBates = batesNext
-  plans.forEach((p, idx) => {
-    // A reused doc must re-render if its Bates number drifted OR (when item numbering is on)
-    // its item number drifted — either changes a stamp or the filename prefix on disk.
-    const batesShift = assignBates && p.contentReuse && p.prev && p.prev.begBates !== label(planBates)
-    const itemShift = itemNumbering && p.contentReuse && p.prev && p.prev.itemNo !== idx + 1
-    if (batesShift || itemShift) shifted.push(p)
+  plans.forEach((p) => {
+    // A reused family must re-render if its head Bates number drifted (an earlier family
+    // changed span and pushed it along) — the stamp + every Bates-prefixed name would be wrong.
+    const batesShift = assignBates && p.contentReuse && p.prev && headRec(p.prev).begBates !== label(planBates)
+    if (batesShift) shifted.push(p)
     planBates += spanOf(p)
   })
 
@@ -1207,16 +1332,17 @@ export async function buildProduction(
     for (let i = 0; i < plans.length; i++) {
       if (isCancelled()) break
       const p = plans[i]
-      const itemNo = i + 1
       emit({ type: 'index-progress', collectionId: collection.id, phase: 'Numbering documents', done: i, total: plans.length, currentFile: p.doc.name })
-      if (p.contentReuse && p.prev && (!assignBates || p.prev.begBates === label(batesNext)) && (!itemNumbering || p.prev.itemNo === itemNo)) {
+      if (p.contentReuse && p.prev && (!assignBates || headRec(p.prev).begBates === label(batesNext))) {
         // One-time migration: an earlier run named a PDF `…pdf.pdf` (base already ended
         // in .pdf). Rename it to the single-extension form and fix the stored path so the
         // load file / review index pick it up — without forcing a re-render.
         const prev = await fixDoubledPdfName(outRoot, p.prev)
-        items.push(prev) // reuse the already-produced document + its Bates
-        used.add(path.join(outRoot, prev.fileRel).toLowerCase())
-        batesNext += prev.batesSpan ?? prev.pages
+        items.push(prev) // reuse the already-produced family + its Bates numbers
+        // Reserve every produced filename in the family folder so a later family can't claim it.
+        const famFolder = path.dirname(path.join(outRoot, headRec(prev).fileRel))
+        for (const f of prev.files ?? []) used.add(path.join(famFolder, f).toLowerCase())
+        batesNext += prev.familySpan
         result.skipped++
         result.pdfCount++
         if (prev.attKeys && prev.attKeys.length) reusedWithAtts.push({ doc: p.doc, rel: p.rel })
@@ -1232,11 +1358,11 @@ export async function buildProduction(
         }
       }
       try {
-        const { rec, excludedMeta, attKeys, files } = await writeRendered(r, outRoot, batesNext, prefix, assignBates, used, result, itemPrefixFor(itemNo), attKeyBySha)
-        items.push({ id: p.doc.id, path: p.doc.path, mtime: p.doc.modifiedAt, size: p.doc.size, excluded: excludedMeta, attKeys, files, itemNo: itemNumbering ? itemNo : 0, ...rec })
-        batesNext += rec.batesSpan
+        const { records, excludedMeta, attKeys, files, familySpan } = await writeRendered(r, outRoot, batesNext, prefix, assignBates, used, result, attKeyBySha)
+        items.push({ id: p.doc.id, path: p.doc.path, mtime: p.doc.modifiedAt, size: p.doc.size, excluded: excludedMeta, attKeys, files, records, familySpan })
+        batesNext += familySpan
         result.processed++
-        result.pdfCount++
+        result.pdfCount += records.length
       } catch (e) {
         result.errors.push({ file: p.doc.path, error: (e as Error).message })
       }
@@ -1290,7 +1416,17 @@ export async function buildProduction(
   // resume run (when the full set is produced).
   if (isCancelled()) return result
 
-  const records: ProdRecord[] = items
+  // Flatten each source's family into one record per produced Bates document (email + every
+  // attachment), stamping the family range (BEGATTACH/ENDATTACH) onto every member so the
+  // load file can reconstruct parent↔child grouping.
+  const records: ProdRecord[] = []
+  for (const it of items) {
+    const fam = it.records ?? []
+    if (!fam.length) continue
+    const begAttach = fam[0].begBates
+    const endAttach = [...fam].reverse().find((r) => r.endBates)?.endBates || fam[fam.length - 1].endBates
+    for (const rec of fam) records.push({ ...rec, begAttach, endAttach })
+  }
   if (assignBates && records.length) {
     const first = records.find((r) => r.begBates)
     const last = [...records].reverse().find((r) => r.endBates)

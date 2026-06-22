@@ -421,14 +421,15 @@ export interface Collection {
   features?: ProcessFeatures
   /** Bates numbering config for the production (prefix + start number). */
   bates?: { prefix: string; start: number }
-  /** Legacy. Attachments are now ALWAYS merged onto the end of the email PDF, so this is
-   *  treated as true regardless of value; kept only so old sets / rules files still load. */
+  /** LEGACY opt-in: merge each email's attachments onto the end of one family PDF sharing a
+   *  single Bates span. Default (off) is the e-discovery standard — each attachment is its
+   *  own Bates-numbered document (imaged PDF / native + slip-sheet) in family order. */
   combineAttachments?: boolean
-  /** Also keep each email's attachments as separate native files beside the PDF
-   *  (opt-in; default off — they already live inside the combined PDF). */
+  /** Deprecated. Superseded by the per-attachment-Bates default (each kept attachment is now
+   *  produced as its own document). Retained so old sets / rules files still parse. */
   separateAttachments?: boolean
-  /** Prefix every produced document with a sequential, zero-padded item number per family
-   *  (e.g. `0001 - Smith Contract.pdf`). Opt-in; off by default. */
+  /** Deprecated. The Bates number is now the per-document identifier (files are prefixed with
+   *  it), so the old sequential item-number prefix is retired. Retained for old sets. */
   itemNumbering?: boolean
   /** Drop email signature graphics + footer boilerplate when rendering to PDF;
    *  also sets aside logo/icon attachments (small images) to Excluded/. */

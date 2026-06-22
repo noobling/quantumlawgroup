@@ -124,9 +124,11 @@ async function main(): Promise<void> {
   // Sweep keeps those and removes everything else: the kept email's folder keeps its PDF +
   // the 4096 report attachment (TPL4AL + the collision-prefixed _report go); the relocated
   // email keeps only its PDF in the shared folder, orphaning the old gone/ folder entirely.
+  // The family head's fileRel determines the folder swept; `records: [head]` matches the
+  // ProdItem shape (head + attachment children) the production now produces.
   const items = [
-    { fileRel: 'Documents/Mailbox/kept/kept.pdf', files: ['kept.pdf', 'report.pdf'] },
-    { fileRel: 'Documents/Mailbox/gone.pdf', files: ['gone.pdf'] }
+    { records: [{ fileRel: 'Documents/Mailbox/kept/kept.pdf' }], files: ['kept.pdf', 'report.pdf'] },
+    { records: [{ fileRel: 'Documents/Mailbox/gone.pdf' }], files: ['gone.pdf'] }
   ]
   log('running sweepStaleOutputs…')
   await sweepStaleOutputs(sweepOut, items as Parameters<typeof sweepStaleOutputs>[1])

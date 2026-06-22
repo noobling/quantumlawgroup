@@ -145,25 +145,26 @@ const PREVIEW_CAP = 25 * 1024 * 1024 // keep huge files out of the inline previe
 // "image018 (69004 bytes, dh=c1d497e9e0f0f0c0).png" (older runs: just "(69004 bytes)").
 // Strip that decoration to recover the original attachment name. Keep both shapes working.
 const DECOR_RE = /^(.*) \(\d+ bytes(?:, dh=[^)]*)?\)(\.[^.]*)$/
-// Produced documents are prefixed with a per-family item number when that's on, e.g.
-// "0097 - image004.png". Strip that leading prefix so the fingerprint matches the original
-// attachment name the resolver works in (only when item numbering is on, so a real filename
-// that genuinely starts with "1234 - " isn't mangled). Removes a single leading prefix only.
-const ITEMNO_RE = /^\d+ - /
-const undecorateName = (name: string, itemNumbering = false): string => {
-  const base = itemNumbering ? name.replace(ITEMNO_RE, '') : name
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// Produced documents are prefixed with their Bates number, e.g. "DEF000127 - image004.png".
+// Strip that leading prefix (the set's Bates prefix + digits + " - ") so the fingerprint
+// matches the original attachment name the resolver works in. Scoped to the actual Bates
+// prefix so a real filename that happens to start with "1234 - " isn't mangled. Removes a
+// single leading prefix only.
+const undecorateName = (name: string, batesPrefix = ''): string => {
+  const base = batesPrefix ? name.replace(new RegExp('^' + escapeRe(batesPrefix) + '\\d+ - '), '') : name
   const m = base.match(DECOR_RE)
   return m ? m[1] + m[2] : base
 }
 // Pointer to the attachment the user clicked (name|size), matching the resolver's fpOf in
 // production.ts. It's only a POINTER: the resolver maps it to the file's actual bytes and
 // excludes/keeps by content (this file + every similar/identical copy).
-const fingerprintOf = (entry: DirEntry, itemNumbering = false): string => {
-  return undecorateName(entry.name, itemNumbering).trim().toLowerCase() + '|' + entry.size
+const fingerprintOf = (entry: DirEntry, batesPrefix = ''): string => {
+  return undecorateName(entry.name, batesPrefix).trim().toLowerCase() + '|' + entry.size
 }
 // The original attachment name for a file, stripping the decoration that Excluded/ copies
-// carry (and any item-number prefix), so it matches the by-name exclude/keep lists.
-const baseNameOf = (entry: DirEntry, itemNumbering = false): string => undecorateName(entry.name, itemNumbering)
+// carry (and any Bates-number prefix), so it matches the by-name exclude/keep lists.
+const baseNameOf = (entry: DirEntry, batesPrefix = ''): string => undecorateName(entry.name, batesPrefix)
 
 /** Undo choice for a file excluded by a by-name rule: drop the whole name rule, or keep
  *  just this one file (a per-file keep that overrides the name exclusion for this path). */
@@ -193,7 +194,7 @@ function Preview({
   keptFps,
   keptNames,
   intendedDirs,
-  itemNumbering,
+  batesPrefix,
   busy,
   onExclude,
   onUnexclude,
@@ -216,8 +217,9 @@ function Preview({
   keptNames: Set<string>
   /** For a file in Excluded/: the produced folder(s) a restore would put it back into. */
   intendedDirs?: string[]
-  /** Produced files carry an item-number prefix — strip it when computing fingerprints. */
-  itemNumbering: boolean
+  /** The set's Bates prefix — produced files carry a `<prefix><digits> - ` prefix; strip it
+   *  when computing fingerprints. Empty when no Bates numbering is configured. */
+  batesPrefix: string
   /** A re-run is in flight — block toggling so changes can't queue onto a half-built output. */
   busy: boolean
   onExclude: (name: string, fp: string, paths?: string[]) => void
@@ -284,8 +286,8 @@ function Preview({
     )
   }
 
-  const base = baseNameOf(entry, itemNumbering)
-  const fp = fingerprintOf(entry, itemNumbering)
+  const base = baseNameOf(entry, batesPrefix)
+  const fp = fingerprintOf(entry, batesPrefix)
   // A per-file or by-name "keep" overrides every exclusion rule (matches production).
   const isRestoredDirect = keptFps.has(fp) || keptNames.has(base.toLowerCase())
   // Restored only because a look-alike copy was restored (no keep rule on this file itself).
@@ -967,8 +969,8 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   // (name or exact file) OR by the content-based preview — so every copy of an excluded
   // image is crossed out, even under a different filename. A keep rule pins it back in.
   const isExcludedEntry = (entry: DirEntry): boolean => {
-    const name = baseNameOf(entry, !!c.itemNumbering).toLowerCase()
-    const fp = fingerprintOf(entry, !!c.itemNumbering)
+    const name = baseNameOf(entry, c.bates?.prefix ?? '').toLowerCase()
+    const fp = fingerprintOf(entry, c.bates?.prefix ?? '')
     // A keep rule (direct, by-name, or by look-alike match) pins it back in.
     if (keptSet.has(fp) || keptNamesSet.has(name) || resolvedKeptFps.has(fp)) return false
     return excludedSet.has(name) || excludedFpSet.has(fp) || resolvedExcludedFps.has(fp)
@@ -981,8 +983,8 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   // is restored (or un-restored). No-op for folders or while a re-run is in flight.
   const toggleExcludeSelected = (entry: DirEntry): void => {
     if (busy || entry.isDir) return
-    const base = baseNameOf(entry, !!c.itemNumbering)
-    const fp = fingerprintOf(entry, !!c.itemNumbering)
+    const base = baseNameOf(entry, c.bates?.prefix ?? '')
+    const fp = fingerprintOf(entry, c.bates?.prefix ?? '')
     const nameLc = base.toLowerCase()
     const intendedDirs = restoreMap?.[entry.name]
     const inExcludedFolder =
@@ -1265,7 +1267,7 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
             keptFps={keptSet}
             keptNames={keptNamesSet}
             intendedDirs={selected ? restoreMap?.[selected.name] : undefined}
-            itemNumbering={!!c.itemNumbering}
+            batesPrefix={c.bates?.prefix ?? ''}
             busy={busy}
             onExclude={excludeAttachment}
             onUnexclude={unexcludeAttachment}

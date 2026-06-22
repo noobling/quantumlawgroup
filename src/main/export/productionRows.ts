@@ -23,6 +23,12 @@ export interface ProdRecord {
   fileRel: string
   attCount: number
   attNames: string
+  /** Family range (BEGATTACH/ENDATTACH): the first Bates of the parent email through the
+   *  last Bates of its final attachment. Every member of a family carries the SAME range, so
+   *  a review platform can reconstruct the parent↔child grouping. Filled when flattening the
+   *  per-family records for the load file; falls back to this document's own range. */
+  begAttach?: string
+  endAttach?: string
 }
 
 export const REVIEW_HEADER = [
@@ -51,15 +57,17 @@ export const LOADFILE_HEADER = [
 ]
 
 /**
- * External production load-file rows. Each produced PDF is one document; the
- * family range (BEGATTACH/ENDATTACH) spans that document's own Bates range.
+ * External production load-file rows. Each produced PDF is one document (the parent email
+ * and each of its attachments are separate documents); the family range BEGATTACH/ENDATTACH
+ * spans the parent through its last attachment, so the receiving platform can rebuild the
+ * family. Falls back to the document's own range for a standalone document.
  */
 export function loadFileRows(records: ProdRecord[]): string[][] {
   return records.map((r) => [
     r.begBates,
     r.endBates,
-    r.begBates, // BEGATTACH
-    r.endBates, // ENDATTACH
+    r.begAttach || r.begBates, // BEGATTACH (family head)
+    r.endAttach || r.endBates, // ENDATTACH (family tail)
     '', // CUSTODIAN (not derivable)
     r.date,
     r.from,

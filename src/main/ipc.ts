@@ -51,9 +51,8 @@ function applyRulesToCollection(c: Collection, rules: ProcessingRules): void {
     c.aiEnrich = !!rules.features.aiEnrich
   }
   if ('bates' in rules) c.bates = rules.bates ?? undefined
-  c.combineAttachments = true // attachments are always merged into the email PDF now
-  if ('separateAttachments' in rules) c.separateAttachments = !!rules.separateAttachments
-  if ('itemNumbering' in rules) c.itemNumbering = !!rules.itemNumbering
+  // Default (off) = each attachment its own Bates document (standard); on = legacy merged PDF.
+  if ('combineAttachments' in rules) c.combineAttachments = !!rules.combineAttachments
   if ('excludeSignatures' in rules) c.excludeSignatures = !!rules.excludeSignatures
   if ('excludeAttachments' in rules) c.excludeAttachments = strList(rules.excludeAttachments)
   if ('excludeFingerprints' in rules) c.excludeFingerprints = strList(rules.excludeFingerprints)
@@ -505,11 +504,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   // re-renders the production (the flag is in the production configKey, so toggling rebuilds
   // every family and sweeps loose copies a prior "separate" run left behind). `combine` is
   // accepted for signature stability but ignored — combining is always on.
-  ipcMain.handle('library:setAttachmentMode', async (_e, id: string, _combine: boolean, separate: boolean): Promise<CollectionDetail | null> => {
+  ipcMain.handle('library:setAttachmentMode', async (_e, id: string, combine: boolean, _separate: boolean): Promise<CollectionDetail | null> => {
     const c = await getCollection(id)
     if (!c) return null
-    c.combineAttachments = true
-    c.separateAttachments = !!separate
+    // `combine` is the only live setting now: off (default) = each attachment its own Bates
+    // document (the standard); on = legacy single merged family PDF. `separate` is ignored.
+    c.combineAttachments = !!combine
     await saveCollection(c)
     return getCollectionDetail(id)
   })
@@ -538,9 +538,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
         exportedAt: Date.now(),
         features: c.features,
         bates: c.bates ?? null,
-        combineAttachments: true,
-        separateAttachments: !!c.separateAttachments,
-        itemNumbering: !!c.itemNumbering,
+        combineAttachments: !!c.combineAttachments,
         excludeSignatures: !!c.excludeSignatures,
         excludeAttachments: c.excludeAttachments ?? [],
         excludeFingerprints: c.excludeFingerprints ?? [],
@@ -671,9 +669,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       status: 'indexing',
       features,
       bates: input.bates,
-      combineAttachments: true,
-      separateAttachments: input.separateAttachments,
-      itemNumbering: input.itemNumbering,
+      combineAttachments: !!input.combineAttachments,
       excludeSignatures: input.excludeSignatures,
       excludeAttachments: input.excludeAttachments,
       aiEnrich: !!(input.aiEnrich || features?.aiEnrich)

@@ -22,8 +22,7 @@ import {
   Check,
   ChevronDown,
   SlidersHorizontal,
-  Paperclip,
-  Hash
+  Paperclip
 } from 'lucide-react'
 
 const DEFAULT_FEATURES: ProcessFeatures = { emailToPdf: false, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false }
@@ -33,20 +32,16 @@ const DEFAULT_FEATURES: ProcessFeatures = { emailToPdf: false, reviewIndex: fals
  *  recreated. The change persists immediately; the next Re-run produces it. */
 function OutputsMenu({
   features,
-  separate,
-  itemNumbering,
+  combine,
   busy,
   onChange,
-  onSeparate,
-  onItemNumbering
+  onCombine
 }: {
   features: ProcessFeatures
-  separate: boolean
-  itemNumbering: boolean
+  combine: boolean
   busy: boolean
   onChange: (f: ProcessFeatures) => void
-  onSeparate: (separate: boolean) => void
-  onItemNumbering: (enabled: boolean) => void
+  onCombine: (combine: boolean) => void
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -105,18 +100,11 @@ function OutputsMenu({
               <div className="px-2 py-1.5 text-[11px] text-ink-600">Document handling — Re-run to re-render.</div>
               {[
                 {
-                  on: separate,
+                  on: combine,
                   icon: <Paperclip className="w-3.5 h-3.5 text-accent" />,
-                  label: 'Save attachments separately',
-                  desc: 'Also write attachments as native files beside the PDF (they’re always merged into it too).',
-                  toggle: () => onSeparate(!separate)
-                },
-                {
-                  on: itemNumbering,
-                  icon: <Hash className="w-3.5 h-3.5 text-accent" />,
-                  label: 'Item numbers',
-                  desc: 'Prefix every document with a per-family number, e.g. 0001 - Smith Contract.pdf.',
-                  toggle: () => onItemNumbering(!itemNumbering)
+                  label: 'Combine into one PDF (legacy)',
+                  desc: 'Merge each email’s attachments into one family PDF sharing a single Bates span. Default (off) gives each attachment its own Bates-numbered document — the e-discovery standard.',
+                  toggle: () => onCombine(!combine)
                 }
               ].map((it) => (
                 <button
@@ -154,7 +142,6 @@ export default function Collection(): JSX.Element {
     resumeCollection,
     setFeatures,
     setAttachmentMode,
-    setItemNumbering,
     setRoute
   } = useStore()
   const openHighlights = (): void => setRoute('highlights')
@@ -222,20 +209,15 @@ export default function Collection(): JSX.Element {
           {!indexing && !isPaused && (
             <OutputsMenu
               features={{ ...DEFAULT_FEATURES, ...(c.features ?? {}) }}
-              separate={!!c.separateAttachments}
-              itemNumbering={!!c.itemNumbering}
+              combine={!!c.combineAttachments}
               busy={indexing}
               onChange={(f) => {
                 setOutputsDirty(true)
                 void setFeatures(f)
               }}
-              onSeparate={(separate) => {
+              onCombine={(combine) => {
                 setOutputsDirty(true)
-                void setAttachmentMode(true, separate)
-              }}
-              onItemNumbering={(enabled) => {
-                setOutputsDirty(true)
-                void setItemNumbering(enabled)
+                void setAttachmentMode(combine, false)
               }}
             />
           )}
