@@ -287,10 +287,6 @@ export interface EmailToPdfProgress {
 export interface EmailToPdfOptions {
   /** Merge each email's attachments (PDFs/images) onto the end of its PDF. */
   combineAttachments?: boolean
-  /** Also write each email's kept attachments as separate native files beside the PDF
-   *  (opt-in; default off — they already live inside the combined PDF). When combine is
-   *  off they're always written natively regardless, or they'd be lost. */
-  separateAttachments?: boolean
   /** Stamp every page with a sequential Bates number, or null for none. */
   bates?: { prefix: string; start: number } | null
   /** Write an INTERNAL review index spreadsheet (Bates range + metadata per email). */
@@ -358,8 +354,6 @@ export interface ProcessingRules {
   features?: ProcessFeatures
   bates?: { prefix: string; start: number } | null
   combineAttachments?: boolean
-  separateAttachments?: boolean
-  itemNumbering?: boolean
   excludeSignatures?: boolean
   excludeAttachments?: string[]
   excludeFingerprints?: string[]
@@ -421,16 +415,10 @@ export interface Collection {
   features?: ProcessFeatures
   /** Bates numbering config for the production (prefix + start number). */
   bates?: { prefix: string; start: number }
-  /** LEGACY opt-in: merge each email's attachments onto the end of one family PDF sharing a
-   *  single Bates span. Default (off) is the e-discovery standard — each attachment is its
-   *  own Bates-numbered document (imaged PDF / native + slip-sheet) in family order. */
+  /** Opt-in: merge each email's attachments onto the end of one family PDF sharing a single
+   *  Bates span. Off (default) is the e-discovery standard — each attachment is its own
+   *  Bates-numbered document (imaged PDF / native + slip-sheet) in family order. */
   combineAttachments?: boolean
-  /** Deprecated. Superseded by the per-attachment-Bates default (each kept attachment is now
-   *  produced as its own document). Retained so old sets / rules files still parse. */
-  separateAttachments?: boolean
-  /** Deprecated. The Bates number is now the per-document identifier (files are prefixed with
-   *  it), so the old sequential item-number prefix is retired. Retained for old sets. */
-  itemNumbering?: boolean
   /** Drop email signature graphics + footer boilerplate when rendering to PDF;
    *  also sets aside logo/icon attachments (small images) to Excluded/. */
   excludeSignatures?: boolean
@@ -537,8 +525,6 @@ export interface CreateCollectionInput {
   /** Bates numbering config (prefix + start). Defaults applied if omitted. */
   bates?: { prefix: string; start: number }
   combineAttachments?: boolean
-  separateAttachments?: boolean
-  itemNumbering?: boolean
   excludeSignatures?: boolean
   excludeAttachments?: string[]
   aiEnrich: boolean
@@ -631,11 +617,9 @@ export interface Api {
     resolveKept: (id: string) => Promise<string[]>
     /** Change which deliverables the set produces; the next re-run produces them. */
     setFeatures: (id: string, features: ProcessFeatures) => Promise<CollectionDetail | null>
-    /** Toggle keeping attachments as separate native files (they're always also merged into
-     *  the email PDF); the next re-run re-renders the production accordingly. */
-    setAttachmentMode: (id: string, combine: boolean, separate: boolean) => Promise<CollectionDetail | null>
-    /** Toggle per-family item-number prefixes on produced documents; applied on the next re-run. */
-    setItemNumbering: (id: string, enabled: boolean) => Promise<CollectionDetail | null>
+    /** Toggle combining each email's attachments into one family PDF (off = each attachment
+     *  its own Bates document); the next re-run re-renders the production accordingly. */
+    setCombine: (id: string, combine: boolean) => Promise<CollectionDetail | null>
     /** Export this set's processing rules to a `.dslrules.json` file (save dialog). */
     exportRules: (id: string) => Promise<ExportResult>
     /** Import processing rules from a `.dslrules.json` file (open dialog) into this set. */

@@ -70,8 +70,7 @@ export default function IndexingRules({ c }: { c: CollectionDetail }): JSX.Eleme
     }
   }
   const emailToPdf = f?.emailToPdf ?? false
-  const separate = !!c.separateAttachments
-  const itemNumbering = !!c.itemNumbering
+  const combine = !!c.combineAttachments
   const autoExclude = !!c.excludeSignatures
   const excludeNames = c.excludeAttachments ?? []
   const excludeFiles = c.excludeFingerprints ?? []
@@ -204,15 +203,10 @@ export default function IndexingRules({ c }: { c: CollectionDetail }): JSX.Eleme
           </Rule>
 
           <Rule icon={<Paperclip className="w-3.5 h-3.5" />}>
-            {separate
-              ? 'Merge each email’s attachments onto the end of its PDF (one Bates range per family) and also save them as separate native files'
-              : 'Merge each email’s attachments onto the end of its PDF — one document, one Bates range per family'}
+            {combine
+              ? 'Merge each email’s attachments onto the end of its PDF — one document, one Bates range per family'
+              : 'Produce each attachment as its own Bates-numbered document, in family order after the email'}
           </Rule>
-          {itemNumbering && (
-            <Rule icon={<Paperclip className="w-3.5 h-3.5" />}>
-              Prefix every document with a per-family item number (e.g. <span className="font-mono text-slate-400">0001 - …</span>)
-            </Rule>
-          )}
 
           {/* Combined attachment rules: automatic skips, then your excludes/keeps. */}
           <li className="pt-1 text-[10.5px] uppercase tracking-wider text-ink-600">Attachment rules</li>

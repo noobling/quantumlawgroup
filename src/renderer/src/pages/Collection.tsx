@@ -102,7 +102,7 @@ function OutputsMenu({
                 {
                   on: combine,
                   icon: <Paperclip className="w-3.5 h-3.5 text-accent" />,
-                  label: 'Combine into one PDF (legacy)',
+                  label: 'Combine attachments into one PDF',
                   desc: 'Merge each email’s attachments into one family PDF sharing a single Bates span. Default (off) gives each attachment its own Bates-numbered document — the e-discovery standard.',
                   toggle: () => onCombine(!combine)
                 }
@@ -141,7 +141,7 @@ export default function Collection(): JSX.Element {
     pauseCollection,
     resumeCollection,
     setFeatures,
-    setAttachmentMode,
+    setCombine,
     setRoute
   } = useStore()
   const openHighlights = (): void => setRoute('highlights')
@@ -217,7 +217,7 @@ export default function Collection(): JSX.Element {
               }}
               onCombine={(combine) => {
                 setOutputsDirty(true)
-                void setAttachmentMode(combine, false)
+                void setCombine(combine)
               }}
             />
           )}

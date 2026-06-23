@@ -266,7 +266,7 @@ async function main(): Promise<void> {
         fileCount: docs.length,
         status: 'ready',
         aiEnrich: false,
-        separateAttachments: true, // write kept attachments as native files so they're scannable
+        combineAttachments: false, // each attachment kept as a native file so it's scannable
         features: { emailToPdf: true, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false },
         ...over
       }) as Collection
@@ -375,7 +375,7 @@ async function main(): Promise<void> {
     fileCount: snDocs.length,
     status: 'ready',
     aiEnrich: false,
-    separateAttachments: true, // write kept attachments as native files so they're scannable
+    combineAttachments: false, // each attachment kept as a native file so it's scannable
     excludeSignatures: false, // only the manual rule acts
     excludeFingerprints: [`image001.png|${logoA.length}`], // pointer to logoA (msg1)
     features: { emailToPdf: true, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false }
@@ -437,7 +437,7 @@ async function main(): Promise<void> {
   const sigOut = path.join(tmp, 'sig-out')
   const sigCollection = {
     id: 'e2e-sig', name: 'sig', folders: [sigSrc], output: sigOut, createdAt: 0, updatedAt: 0,
-    fileCount: sigDocs.length, status: 'ready', aiEnrich: false, separateAttachments: true,
+    fileCount: sigDocs.length, status: 'ready', aiEnrich: false, combineAttachments: false,
     excludeSignatures: true, // signatures ON, NO manual exclude rule
     features: { emailToPdf: true, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false }
   } as Collection

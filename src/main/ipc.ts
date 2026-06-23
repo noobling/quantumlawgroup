@@ -51,7 +51,7 @@ function applyRulesToCollection(c: Collection, rules: ProcessingRules): void {
     c.aiEnrich = !!rules.features.aiEnrich
   }
   if ('bates' in rules) c.bates = rules.bates ?? undefined
-  // Default (off) = each attachment its own Bates document (standard); on = legacy merged PDF.
+  // Off (default) = each attachment its own Bates document; on = one merged family PDF.
   if ('combineAttachments' in rules) c.combineAttachments = !!rules.combineAttachments
   if ('excludeSignatures' in rules) c.excludeSignatures = !!rules.excludeSignatures
   if ('excludeAttachments' in rules) c.excludeAttachments = strList(rules.excludeAttachments)
@@ -499,28 +499,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return getCollectionDetail(id)
   })
 
-  // Toggle whether an existing set ALSO keeps attachments as separate native files
-  // (they're always merged into the email PDF regardless). Persisted now; the next Re-run
-  // re-renders the production (the flag is in the production configKey, so toggling rebuilds
-  // every family and sweeps loose copies a prior "separate" run left behind). `combine` is
-  // accepted for signature stability but ignored — combining is always on.
-  ipcMain.handle('library:setAttachmentMode', async (_e, id: string, combine: boolean, _separate: boolean): Promise<CollectionDetail | null> => {
+  // Toggle combining each email's attachments into one family PDF. Off (default) = each
+  // attachment is its own Bates-numbered document; on = one merged family PDF. Persisted now;
+  // the next Re-run re-renders the production (the flag is in the configKey, so toggling
+  // rebuilds every family and the sweep clears the old layout).
+  ipcMain.handle('library:setCombine', async (_e, id: string, combine: boolean): Promise<CollectionDetail | null> => {
     const c = await getCollection(id)
     if (!c) return null
-    // `combine` is the only live setting now: off (default) = each attachment its own Bates
-    // document (the standard); on = legacy single merged family PDF. `separate` is ignored.
     c.combineAttachments = !!combine
-    await saveCollection(c)
-    return getCollectionDetail(id)
-  })
-
-  // Toggle per-family item-number prefixes on produced documents. Persisted now; the next
-  // Re-run re-renders the production (itemNumbering is in the configKey, so toggling renames
-  // every document and the sweep clears the old un-prefixed copies).
-  ipcMain.handle('library:setItemNumbering', async (_e, id: string, enabled: boolean): Promise<CollectionDetail | null> => {
-    const c = await getCollection(id)
-    if (!c) return null
-    c.itemNumbering = !!enabled
     await saveCollection(c)
     return getCollectionDetail(id)
   })

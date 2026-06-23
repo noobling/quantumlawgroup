@@ -470,7 +470,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
             <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
               <input type="checkbox" checked={combine} onChange={(e) => setCombine(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
               <span>
-                Combine attachments into one PDF (legacy)
+                Combine attachments into one PDF
                 <span className="text-ink-600"> · off by default — each attachment becomes its own Bates-numbered document (the e-discovery standard); on merges them into one family PDF sharing the email’s Bates span</span>
               </span>
             </label>

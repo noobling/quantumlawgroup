@@ -244,12 +244,9 @@ interface AppState {
   /** Replace the open collection's keep-by-name list. */
   setKeptNames: (names: string[]) => Promise<void>
   setFeatures: (features: ProcessFeatures) => Promise<void>
-  /** Toggle keeping the open set's attachments as separate native files (they're always
-   *  merged into the PDF too). Persists immediately; applied on the next Re-run. */
-  setAttachmentMode: (combine: boolean, separate: boolean) => Promise<void>
-  /** Toggle per-family item-number prefixes on the open set. Persists immediately; applied
-   *  on the next Re-run. */
-  setItemNumbering: (enabled: boolean) => Promise<void>
+  /** Toggle combining the open set's attachments into one family PDF (off = each its own
+   *  Bates document). Persists immediately; applied on the next Re-run. */
+  setCombine: (combine: boolean) => Promise<void>
   /** Export the open set's processing rules to a file. Returns a status for the UI. */
   exportRules: () => Promise<{ ok: boolean; error?: string }>
   /** Import processing rules from a file into the open set. Returns a status for the UI. */
@@ -521,37 +518,20 @@ export const useStore = create<AppState>((set, get) => ({
       if (pendingFeatureSave.get(id) === p) pendingFeatureSave.delete(id)
     }
   },
-  async setAttachmentMode(combine, separate) {
+  async setCombine(combine) {
     const id = get().currentCollectionId
     if (!id) return
     // Reuse the feature-save gate so a fast Re-run waits for this write to land (the run
     // reads the collection from disk; see reindexCollection).
-    const p = window.api.library.setAttachmentMode(id, combine, separate)
+    const p = window.api.library.setCombine(id, combine)
     pendingFeatureSave.set(id, p)
     try {
       const detail = await p
       if (detail) {
         set({ collectionDetail: detail })
         set({
-          collections: get().collections.map((c) =>
-            c.id === id ? { ...c, combineAttachments: detail.combineAttachments, separateAttachments: detail.separateAttachments } : c
-          )
+          collections: get().collections.map((c) => (c.id === id ? { ...c, combineAttachments: detail.combineAttachments } : c))
         })
-      }
-    } finally {
-      if (pendingFeatureSave.get(id) === p) pendingFeatureSave.delete(id)
-    }
-  },
-  async setItemNumbering(enabled) {
-    const id = get().currentCollectionId
-    if (!id) return
-    const p = window.api.library.setItemNumbering(id, enabled)
-    pendingFeatureSave.set(id, p)
-    try {
-      const detail = await p
-      if (detail) {
-        set({ collectionDetail: detail })
-        set({ collections: get().collections.map((c) => (c.id === id ? { ...c, itemNumbering: detail.itemNumbering } : c)) })
       }
     } finally {
       if (pendingFeatureSave.get(id) === p) pendingFeatureSave.delete(id)

@@ -78,9 +78,7 @@ const api: Api = {
     resolveExcluded: (id: string) => ipcRenderer.invoke('library:resolveExcluded', id),
     resolveKept: (id: string) => ipcRenderer.invoke('library:resolveKept', id),
     setFeatures: (id: string, features: ProcessFeatures) => ipcRenderer.invoke('library:setFeatures', id, features),
-    setAttachmentMode: (id: string, combine: boolean, separate: boolean) =>
-      ipcRenderer.invoke('library:setAttachmentMode', id, combine, separate),
-    setItemNumbering: (id: string, enabled: boolean) => ipcRenderer.invoke('library:setItemNumbering', id, enabled),
+    setCombine: (id: string, combine: boolean) => ipcRenderer.invoke('library:setCombine', id, combine),
     exportRules: (id: string) => ipcRenderer.invoke('library:exportRules', id),
     importRules: (id: string) => ipcRenderer.invoke('library:importRules', id),
     pickRules: () => ipcRenderer.invoke('library:pickRules'),

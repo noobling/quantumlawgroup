@@ -109,7 +109,7 @@ type ExclusionSets = {
 /** Render-time options (no Bates — numbering is decided later, in order). */
 type RenderOpts = ExclusionSets & {
   convert: boolean
-  /** LEGACY: merge attachments into one family PDF sharing a single Bates span. */
+  /** Merge attachments into one family PDF sharing a single Bates span (off = per-attachment Bates). */
   combine: boolean
   /** STANDARD: render each kept attachment as its OWN Bates-numbered document (an imaged
    *  PDF, or a slip-sheet + native), in family order after the email. On when not combining
@@ -214,7 +214,7 @@ type Rendered = {
   attNames: string
   attKeys: string[]
   /** Loose native files to write beside the PDF WITHOUT their own Bates number — used in the
-   *  legacy combine mode (attachments merged into the family PDF) and for slip-sheeted doc
+   *  the combine mode (attachments merged into the family PDF) and for slip-sheeted doc
    *  natives. In the standard per-attachment-Bates mode this stays empty (see `atts`). */
   attachments: { name: string; content: Buffer }[]
   /** STANDARD mode: each kept attachment as its own Bates-numbered document, in family order
@@ -341,7 +341,7 @@ async function renderOne(
     // whether a changed exclusion decision (resolved to sha) actually touches this doc.
     attKeys = [...built.fileAttachments, ...built.excludedAttachments].map((a) => sha256(a.content ?? Buffer.alloc(0)))
     // STANDARD (per-attachment Bates): render each kept attachment as its own document, in
-    // family order. Otherwise LEGACY combine: attachments are merged into the email PDF above
+    // family order. Otherwise combine: attachments are merged into the email PDF above
     // and ALSO written as loose native files (so they're browsable), as before.
     if (opts.perAtt) {
       for (const a of built.fileAttachments) atts.push(await renderAttachment(win, { filename: a.filename, content: a.content }, result))
@@ -572,7 +572,7 @@ async function writeRendered(
   records.push({ begBates, endBates, pages, batesSpan: pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, path.join(folder, pdfName)), attCount: r.attCount, attNames: r.attNames })
   cursor += pages
 
-  // --- Loose natives (legacy combine companions / slip-sheeted doc natives) — no own Bates. ---
+  // --- Loose natives (combine-mode companions / slip-sheeted doc natives) — no own Bates. ---
   for (const a of looseNatives) {
     const safe = safeName(a.name)
     const k = r.doc.kind === 'email' ? attKeyBySha.get(sha256(a.content)) : undefined
@@ -1186,7 +1186,7 @@ export async function buildProduction(
 
   // Attachment handling. STANDARD (default): each kept attachment is produced as its own
   // Bates-numbered document, in family order after the email — needs Bates to be assigned (a
-  // per-document number is the whole point). LEGACY combine (opt-in): attachments are merged
+  // per-document number is the whole point). Combine (opt-in): attachments are merged
   // into one family PDF sharing the email's single Bates span.
   const combine = !!collection.combineAttachments
   const perAtt = !combine && assignBates
@@ -1226,7 +1226,7 @@ export async function buildProduction(
   // affected content, so they invalidate per-doc (below). keepNames IS here (name-scoped,
   // can't be diffed against content keys, and changes rarely): a change re-renders all.
   const configKey = JSON.stringify({
-    combine, // legacy one-PDF families vs. the per-attachment-Bates default
+    combine, // one-PDF families vs. the per-attachment-Bates default
     perAtt, // each attachment its own Bates document — changes naming + numbering
     perAttBates: 2, // structural version of the per-attachment Bates layout (bump to re-render all)
     attKeyInName: 1, // produced attachment files carry their size+dHash in the name (bump to re-render)
