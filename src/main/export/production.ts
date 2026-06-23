@@ -573,12 +573,15 @@ async function writeRendered(
   cursor += pages
 
   // --- Loose natives (combine-mode companions / slip-sheeted doc natives) — no own Bates. ---
+  // For a standalone document produced natively (a spreadsheet, or an unrenderable file that got
+  // a slip-sheet), the first native is the real document — record it as the head's NATIVELINK.
   for (const a of looseNatives) {
     const safe = safeName(a.name)
     const k = r.doc.kind === 'email' ? attKeyBySha.get(sha256(a.content)) : undefined
     const name = claim(k?.img ? decorateAttKey(safe, a.content.length, k.dh) : safe)
     files.push(name)
     await fs.writeFile(path.join(folder, name), a.content)
+    if (r.doc.kind !== 'email' && !records[0].nativeRel) records[0].nativeRel = path.relative(outRoot, path.join(folder, name))
   }
 
   // --- Attachment children: each its own Bates document (imaged PDF / slip), in order. ---
@@ -588,15 +591,18 @@ async function writeRendered(
     files.push(childPdfName)
     await fs.writeFile(path.join(folder, childPdfName), s.bytes)
     // Produce the native alongside (when not a passthrough PDF) so fidelity is preserved AND
-    // the content-based exclusion workflow keeps matching on the native's name|size|dHash.
+    // the content-based exclusion workflow keeps matching on the native's name|size|dHash. Its
+    // relative path becomes this document's NATIVELINK in the load file.
+    let nativeRel: string | undefined
     if (att.native) {
       const safe = safeName(att.name)
       const k = attKeyBySha.get(att.sha)
       const nativeName = claim(batesPrefixName(s.begin, k?.img ? decorateAttKey(safe, att.native.length, k.dh) : safe))
       files.push(nativeName)
       await fs.writeFile(path.join(folder, nativeName), att.native)
+      nativeRel = path.relative(outRoot, path.join(folder, nativeName))
     }
-    records.push({ begBates: s.begin, endBates: s.end, pages: s.pages, batesSpan: s.pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: att.name, docType: 'Attachment', kind: 'doc', fileRel: path.relative(outRoot, path.join(folder, childPdfName)), attCount: 0, attNames: '' })
+    records.push({ begBates: s.begin, endBates: s.end, pages: s.pages, batesSpan: s.pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: att.name, docType: 'Attachment', kind: 'doc', fileRel: path.relative(outRoot, path.join(folder, childPdfName)), attCount: 0, attNames: '', nativeRel })
     cursor += s.pages
   }
 
@@ -1228,7 +1234,7 @@ export async function buildProduction(
   const configKey = JSON.stringify({
     combine, // one-PDF families vs. the per-attachment-Bates default
     perAtt, // each attachment its own Bates document — changes naming + numbering
-    perAttBates: 2, // structural version of the per-attachment Bates layout (bump to re-render all)
+    perAttBates: 3, // structural version of the per-attachment Bates layout (bump to re-render all)
     attKeyInName: 1, // produced attachment files carry their size+dHash in the name (bump to re-render)
     dhashV: DHASH_VERSION, // a dHash-algorithm change refreshes the size+dHash decoration on produced files
     excludeSignatures: !!collection.excludeSignatures,

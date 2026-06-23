@@ -21,6 +21,10 @@ export interface ProdRecord {
   kind: 'email' | 'doc'
   /** Produced PDF path, relative to the output folder. */
   fileRel: string
+  /** For a natively-produced document (a spreadsheet, or an image/slip-sheet that has a native
+   *  companion): the native file's path, relative to the output folder — emitted as NATIVELINK
+   *  so a review platform loads the original file alongside the Bates-stamped image. */
+  nativeRel?: string
   attCount: number
   attNames: string
   /** Family range (BEGATTACH/ENDATTACH): the first Bates of the parent email through the
@@ -53,7 +57,7 @@ export function reviewIndexRows(records: ProdRecord[]): string[][] {
 
 export const LOADFILE_HEADER = [
   'BEGBATES', 'ENDBATES', 'BEGATTACH', 'ENDATTACH', 'CUSTODIAN', 'DATE SENT',
-  'FROM', 'TO', 'CC', 'SUBJECT', 'DOC TYPE', 'FILE NAME', 'PAGE COUNT', 'ATTACHMENT NAMES'
+  'FROM', 'TO', 'CC', 'SUBJECT', 'DOC TYPE', 'FILE NAME', 'NATIVELINK', 'PAGE COUNT', 'ATTACHMENT NAMES'
 ]
 
 /**
@@ -76,6 +80,7 @@ export function loadFileRows(records: ProdRecord[]): string[][] {
     r.subject,
     r.docType,
     r.fileRel,
+    r.nativeRel || '', // NATIVELINK — original file for a natively-produced document
     r.pages ? String(r.pages) : '',
     r.attNames
   ])
