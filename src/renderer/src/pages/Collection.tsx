@@ -54,7 +54,7 @@ function OutputsMenu({
     return () => document.removeEventListener('mousedown', h)
   }, [open])
   const items: { key: keyof ProcessFeatures; label: string; desc: string; icon: JSX.Element }[] = [
-    { key: 'emailToPdf', label: 'Convert to PDF', desc: 'Render emails + docs to Bates-ready PDFs (off: copy natives).', icon: <FileText className="w-3.5 h-3.5 text-accent" /> },
+    { key: 'emailToPdf', label: 'Convert emails to PDF', desc: 'Render emails to Bates-ready PDFs. Other documents are indexed + produced as their native original.', icon: <FileText className="w-3.5 h-3.5 text-accent" /> },
     { key: 'reviewIndex', label: 'Review index (Excel)', desc: 'Internal index over the whole set — for your review team.', icon: <FileSpreadsheet className="w-3.5 h-3.5 text-accent" /> },
     { key: 'loadFile', label: 'Production load file', desc: '.DAT + .CSV with family ranges — for opposing counsel.', icon: <Send className="w-3.5 h-3.5 text-accent" /> },
     { key: 'highlights', label: 'Highlights table', desc: 'Every reviewer highlight, flattened to a spreadsheet.', icon: <Highlighter className="w-3.5 h-3.5 text-accent" /> },

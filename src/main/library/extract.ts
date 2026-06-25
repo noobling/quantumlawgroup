@@ -44,7 +44,12 @@ export async function extractXlsxText(filePath: string): Promise<string> {
   return out.join('\n')
 }
 
+// Formats we can pull rich text out of. Any other format is still indexed (by filename,
+// and produced as a native), just without full-text search of its contents.
 export const INDEXABLE_EXTENSIONS = ['.eml', '.pdf', '.docx', '.xlsx', '.xls', '.pptx', '.ppsx', '.ppt', '.txt', '.md', '.csv']
+
+// Plain-text formats safe to read straight off disk as UTF-8.
+const PLAIN_TEXT_EXTENSIONS = new Set(['.txt', '.md', '.csv', '.tsv', '.json', '.log', '.xml', '.html', '.htm', '.yml', '.yaml', '.rtf'])
 
 export interface Extracted {
   text: string
@@ -69,6 +74,9 @@ export async function extractText(filePath: string): Promise<Extracted> {
     case '.ppt':
       return { text: await pptText(filePath), kind: 'doc' }
     default:
-      return { text: await fs.readFile(filePath, 'utf8'), kind: 'doc' }
+      // Plain-text formats read directly; anything else (binary/unknown) is indexed by
+      // filename only — no contents, but it still gets a card and a Bates number.
+      if (PLAIN_TEXT_EXTENSIONS.has(ext)) return { text: await fs.readFile(filePath, 'utf8'), kind: 'doc' }
+      return { text: '', kind: 'doc' }
   }
 }

@@ -178,8 +178,8 @@ export function excludedSummary(meta: { name: string; size: number }[]): { total
 
 /**
  * Which documents go into the production: a review index or a production includes
- * every doc so it can carry a Bates number (rendered to PDF, or copied as a native
- * when "Convert to PDF" is off); "email→PDF" alone produces just the emails.
+ * every doc so it can carry a Bates number (emails rendered to PDF; every other type
+ * copied as its native original); "email→PDF" alone produces just the emails.
  */
 export function productionTargets<T extends { kind: 'email' | 'doc' }>(
   docs: T[],

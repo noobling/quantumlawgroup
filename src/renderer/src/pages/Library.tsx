@@ -420,7 +420,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
 
         <div className="mt-5 text-[13px] text-ink-600">Produce</div>
         <div className="mt-1 rounded-lg border border-ink-700/70 bg-ink-900/40 divide-y divide-ink-800/70">
-          <Toggle checked={emailToPdf} onChange={setEmailToPdf} icon={<Mail className="w-3.5 h-3.5 text-accent" />} title="Convert documents to PDF" desc="Render emails + docs to Bates-ready PDFs. Off: copy the originals as-is (native production)." />
+          <Toggle checked={emailToPdf} onChange={setEmailToPdf} icon={<Mail className="w-3.5 h-3.5 text-accent" />} title="Convert emails to PDF" desc="Render emails to Bates-ready PDFs. Every other document type is indexed and produced as its native original — no conversion." />
           <Toggle checked={reviewIndex} onChange={setReviewIndex} icon={<FileSpreadsheet className="w-3.5 h-3.5 text-accent" />} title="Review index (Excel)" desc="Bates, date, type, from/to, subject — for your own review team." />
           <Toggle checked={loadFile} onChange={setLoadFile} icon={<Send className="w-3.5 h-3.5 text-accent" />} title="Production load file (.DAT + .CSV)" desc="For opposing counsel / their review platform; family ranges + Bates." />
           <Toggle checked={highlights} onChange={setHighlights} icon={<Highlighter className="w-3.5 h-3.5 text-accent" />} title="Highlights table" desc="Extract every reviewer highlight to a spreadsheet." />
@@ -431,7 +431,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
           <p className="mt-2 text-[11.5px] text-ink-600">
             A review index or production includes <span className="text-slate-400">every</span> document with a Bates number —{' '}
             {emailToPdf ? (
-              <>rendered to a Bates-stamped PDF.</>
+              <>emails rendered to a Bates-stamped PDF, every other type kept as its <span className="text-slate-400">original native</span>.</>
             ) : (
               <>copied as the <span className="text-slate-400">original native</span> with a document-level Bates number (no PDF conversion).</>
             )}

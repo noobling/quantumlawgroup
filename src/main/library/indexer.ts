@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs'
 import path from 'path'
 import type { Collection, IndexedDoc, IndexEvent } from '@shared/types'
-import { INDEXABLE_EXTENSIONS, extractText } from './extract'
+import { extractText } from './extract'
 import { parseEmlFile } from './email'
 import { extractHighlights } from './highlights'
 import { addDoc, removeDoc, type LexicalIndex } from './lexical'
@@ -68,7 +68,9 @@ async function walk(folders: string[]): Promise<string[]> {
       if (e.name.startsWith('.') || e.name === 'node_modules') continue
       const full = path.join(dir, e.name)
       if (e.isDirectory()) await recurse(full, depth + 1)
-      else if (INDEXABLE_EXTENSIONS.includes(path.extname(e.name).toLowerCase())) out.push(full)
+      // Any document format is indexable: we extract text for supported types and fall
+      // back to filename-only indexing for the rest (still searchable, still produced).
+      else out.push(full)
     }
   }
   // A source can be a folder (walked) or a single file (added directly), so a
@@ -81,7 +83,7 @@ async function walk(folders: string[]): Promise<string[]> {
       continue
     }
     if (stat.isDirectory()) await recurse(f, 0)
-    else if (INDEXABLE_EXTENSIONS.includes(path.extname(f).toLowerCase())) out.push(f)
+    else out.push(f)
   }
   return out
 }

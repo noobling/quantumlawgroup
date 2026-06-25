@@ -266,10 +266,12 @@ async function renderOne(
   const folderParent = path.join(docsRoot, relDir)
   const base0 = { doc, rel, from: '', to: '', cc: '', subject: '', date: '', docType, attCount: 0, attNames: '', attKeys: [] as string[], excludedMeta, atts: [] as RenderedAtt[], folderParent }
 
-  // Native production: copy the original verbatim later; only gather metadata here.
-  // Render-time filtering (signatures, excluded attachments) doesn't apply — the
-  // original is kept intact.
-  if (!opts.convert) {
+  // Convert-to-PDF applies to EMAILS ONLY: an .eml has no presentable native form, so we
+  // render it to a PDF. Every other document type is produced as its native original and
+  // indexed as-is — a PDF is already a PDF, Word/Excel keep full fidelity — so there's
+  // nothing to "convert". Render-time filtering (signatures, excluded attachments) applies
+  // only to the email render path below; natives are copied verbatim later, intact.
+  if (!opts.convert || ext !== '.eml') {
     if (ext === '.eml') {
       const mail = await simpleParser(await fs.readFile(doc.path))
       const atts = (mail.attachments || []).filter((a) => a.contentDisposition === 'attachment')
@@ -360,20 +362,6 @@ async function renderOne(
     } else {
       for (const a of built.fileAttachments) attachments.push({ name: a.filename || 'attachment', content: a.content })
     }
-  } else {
-    subject = doc.title || base
-    date = doc.date || ''
-    let rendered = await renderDocToPdf(win, doc.path)
-    if (!rendered) {
-      rendered = await slipSheet(doc.name)
-      result.slipSheets++
-      // The PDF is only a placeholder — produce the native file alongside it.
-      attachments.push({ name: doc.name, content: await fs.readFile(doc.path) })
-    } else if (ext === '.xlsx') {
-      // Spreadsheets lose fidelity flattened to PDF — keep the native too.
-      attachments.push({ name: doc.name, content: await fs.readFile(doc.path) })
-    }
-    pdf = rendered
   }
 
   const pages = await pageCount(pdf).catch(() => 1)
@@ -1180,8 +1168,9 @@ export async function buildProduction(
   const keepNames = new Set((collection.keepNames ?? []).map((s) => s.trim().toLowerCase()))
   await fs.mkdir(outRoot, { recursive: true })
 
-  // A review index or production includes every doc; "convert to PDF" alone produces
-  // just emails. With convert off, documents are copied as natives instead of rendered.
+  // A review index or production includes every doc; "convert emails to PDF" alone
+  // produces just the emails. Only emails are ever rendered to PDF — every other document
+  // type is produced as its native original and indexed as-is.
   const fullProduction = features.reviewIndex || features.loadFile
   const convert = features.emailToPdf
   // Bates order: documents already produced keep their prior position (so their
@@ -1255,7 +1244,7 @@ export async function buildProduction(
   const configKey = JSON.stringify({
     combine, // one-PDF families vs. the per-attachment-Bates default
     perAtt, // each attachment its own Bates document — changes naming + numbering
-    perAttBates: 4, // structural version of the per-attachment Bates layout (bump to re-render all)
+    perAttBates: 5, // structural version of the per-attachment Bates layout (bump to re-render all)
     attKeyInName: 1, // produced attachment files carry their size+dHash in the name (bump to re-render)
     dhashV: DHASH_VERSION, // a dHash-algorithm change refreshes the size+dHash decoration on produced files
     excludeSignatures: !!collection.excludeSignatures,
