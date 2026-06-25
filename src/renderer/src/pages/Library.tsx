@@ -237,9 +237,9 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [folders, setFolders] = useState<string[]>([])
   const [output, setOutput] = useState('')
   const [outputTouched, setOutputTouched] = useState(false)
-  // Defaults: exclude attachments/logos, the review index, and the production load file
-  // are on; everything else (convert emails to PDF, combine, highlights, AI) is off.
-  const [emailToPdf, setEmailToPdf] = useState(false)
+  // Defaults: convert emails to PDF, exclude attachments/logos, the review index, and the
+  // production load file are on; everything else (combine, highlights, AI) is off.
+  const [emailToPdf, setEmailToPdf] = useState(true)
   const [reviewIndex, setReviewIndex] = useState(true)
   const [loadFile, setLoadFile] = useState(true)
   const [highlights, setHighlights] = useState(false)
