@@ -312,13 +312,20 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   useEffect(() => {
     let stale = false
     const target = wantsOutput ? outputValue.trim() : ''
-    if (!target) {
+    // Guard the call: an older preload (dev not yet restarted) won't have this IPC, and a
+    // missing/failed probe must never blank the form — just skip the warning.
+    const probe = window.api.library.outputState
+    if (!target || typeof probe !== 'function') {
       setOutputExistsNonEmpty(false)
       return
     }
-    void window.api.library.outputState(target).then((s) => {
-      if (!stale) setOutputExistsNonEmpty(s.exists && !s.empty)
-    })
+    probe(target)
+      .then((s) => {
+        if (!stale) setOutputExistsNonEmpty(!!s && s.exists && !s.empty)
+      })
+      .catch(() => {
+        if (!stale) setOutputExistsNonEmpty(false)
+      })
     return () => {
       stale = true
     }
