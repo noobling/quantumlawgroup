@@ -1,0 +1,32 @@
+{
+  "name": "quantumlawgroup-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Quantum Law Group — client-side document indexing & search (no server, nothing leaves the browser).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "pdfjs-dist": "^4.10.38",
+    "mammoth": "^1.9.0",
+    "xlsx": "^0.18.5",
+    "jszip": "^3.10.1",
+    "postal-mime": "^2.4.3",
+    "@kenjiuno/msgreader": "^1.22.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}
