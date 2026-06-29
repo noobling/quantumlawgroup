@@ -237,10 +237,12 @@ export default function Library(): React.JSX.Element {
                 className="w-full rounded-md bg-white/5 border border-white/15 focus:border-accent outline-none px-4 py-3 text-[15px]"
               />
               <div className="mt-3 text-sm text-ink-400">
-                {query.trim() ? `${results.length} result${results.length === 1 ? '' : 's'}` : ''}
+                {query.trim()
+                  ? `${results.length} result${results.length === 1 ? '' : 's'}`
+                  : `Showing all ${index?.docs.length ?? 0} document${(index?.docs.length ?? 0) === 1 ? '' : 's'}`}
               </div>
               <div className="mt-2 space-y-2">
-                {results.map((h) => (
+                {(query.trim() ? results : (index?.docs ?? []).map((d) => ({ doc: d, score: 0, snippet: '' }))).map((h) => (
                   <div key={h.doc.id} className="rounded-md border border-white/10 bg-white/[0.03] px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="font-medium text-[15px] truncate">{h.doc.subject || h.doc.name}</div>
