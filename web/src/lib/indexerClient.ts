@@ -14,7 +14,7 @@ export function indexFolder(
       const m = e.data
       if (m.type === 'progress') onProgress(m)
       else if (m.type === 'done') {
-        resolve({ docs: m.docs, lexical: m.lexical })
+        resolve({ docs: m.docs, lexical: m.lexical, highlights: m.highlights })
         worker.terminate()
       } else if (m.type === 'error') {
         reject(new Error(m.message))

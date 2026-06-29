@@ -50,4 +50,6 @@ export const putIndex = (id: string, payload: IndexPayload): Promise<unknown> =>
   run(INDEXES, 'readwrite', (s) => s.put(payload, id))
 
 export const getIndex = (id: string): Promise<IndexPayload | undefined> =>
-  run<IndexPayload | undefined>(INDEXES, 'readonly', (s) => s.get(id) as IDBRequest<IndexPayload | undefined>)
+  run<IndexPayload | undefined>(INDEXES, 'readonly', (s) => s.get(id) as IDBRequest<IndexPayload | undefined>).then(
+    (p) => (p ? { ...p, highlights: p.highlights ?? [] } : p)
+  )

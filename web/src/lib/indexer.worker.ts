@@ -3,8 +3,9 @@
 // BM25 index — all off the main thread so the UI stays responsive on large sets.
 import { walkFiles } from './files'
 import { extractText, extOf, INDEXABLE } from './extract'
+import { extractHighlights } from './highlights'
 import { createIndex, addDoc } from './lexical'
-import type { IndexRequest, IndexedDoc, WorkerMessage } from './types'
+import type { IndexRequest, IndexedDoc, Highlight, WorkerMessage } from './types'
 
 const post = (m: WorkerMessage): void => (self as unknown as Worker).postMessage(m)
 
@@ -29,9 +30,11 @@ self.onmessage = async (e: MessageEvent<IndexRequest>) => {
 
     const lexical = createIndex()
     const docs: IndexedDoc[] = []
+    const highlights: Highlight[] = []
     let done = 0
     for (const it of work) {
       const file = it.file ?? (await it.handle!.getFile())
+      const ext = extOf(file.name)
       let extracted
       try {
         extracted = await extractText(file)
@@ -42,7 +45,7 @@ self.onmessage = async (e: MessageEvent<IndexRequest>) => {
         id: it.path,
         path: it.path,
         name: file.name,
-        ext: extOf(file.name),
+        ext,
         size: file.size,
         modifiedAt: file.lastModified,
         kind: extracted.kind,
@@ -53,12 +56,18 @@ self.onmessage = async (e: MessageEvent<IndexRequest>) => {
       // Fold filename + email headers into the searchable text so name/subject hits rank too.
       const searchText = [doc.name, doc.subject, doc.from, doc.to, extracted.text].filter(Boolean).join('\n')
       addDoc(lexical, doc.id, searchText)
+      // Reviewer highlights (.docx/.pdf) — pulled in the same pass.
+      if (ext === '.docx' || ext === '.pdf') {
+        for (const h of await extractHighlights(file, ext)) {
+          highlights.push({ docId: doc.id, docName: doc.name, ...h })
+        }
+      }
       done++
       if (done % 5 === 0 || done === total) {
         post({ type: 'progress', collectionId, phase: 'Reading documents', done, total, currentFile: file.name })
       }
     }
-    post({ type: 'done', collectionId, docs, lexical })
+    post({ type: 'done', collectionId, docs, lexical, highlights })
   } catch (err) {
     post({ type: 'error', collectionId, message: (err as Error)?.message || String(err) })
   }

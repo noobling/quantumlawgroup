@@ -37,10 +37,20 @@ export interface SearchHit {
   snippet: string
 }
 
+export interface Highlight {
+  docId: string
+  docName: string
+  text: string
+  color: string
+  context: string
+  page?: number
+}
+
 /** Persisted per-collection index payload. */
 export interface IndexPayload {
   docs: IndexedDoc[]
   lexical: LexicalIndex
+  highlights: Highlight[]
 }
 
 // ── Worker protocol ──
@@ -56,5 +66,5 @@ export interface IndexRequest {
 
 export type WorkerMessage =
   | { type: 'progress'; collectionId: string; phase: string; done: number; total: number; currentFile?: string }
-  | { type: 'done'; collectionId: string; docs: IndexedDoc[]; lexical: LexicalIndex }
+  | { type: 'done'; collectionId: string; docs: IndexedDoc[]; lexical: LexicalIndex; highlights: Highlight[] }
   | { type: 'error'; collectionId: string; message: string }

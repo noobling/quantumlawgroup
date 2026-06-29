@@ -3,6 +3,7 @@ import { pickDirectory, supportsDirectoryPicker } from '../lib/files'
 import { indexFolder, type IndexSource } from '../lib/indexerClient'
 import { listCollections, putCollection, deleteCollection, putIndex, getIndex } from '../lib/db'
 import { searchDocs } from '../lib/search'
+import { exportCsv, exportXlsx } from '../lib/export'
 import type { Collection, IndexPayload, SearchHit } from '../lib/types'
 
 interface Progress {
@@ -28,6 +29,7 @@ export default function Library(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [view, setView] = useState<'docs' | 'highlights'>('docs')
   const searchRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -47,6 +49,15 @@ export default function Library(): React.JSX.Element {
     () => (index && query.trim() ? searchDocs(index.lexical, index.docs, query) : []),
     [index, query]
   )
+
+  const highlightRows = (): Array<Record<string, unknown>> =>
+    (index?.highlights ?? []).map((h) => ({
+      Document: h.docName,
+      Page: h.page ?? '',
+      Colour: h.color,
+      'Highlighted text': h.text,
+      Context: h.context
+    }))
 
   async function runIndex(source: IndexSource, name: string): Promise<void> {
     setError(null)
@@ -102,6 +113,7 @@ export default function Library(): React.JSX.Element {
   async function open(c: Collection): Promise<void> {
     setActiveId(c.id)
     setQuery('')
+    setView('docs')
     setError(c.status === 'error' ? c.error || 'This set failed to index.' : null)
     setIndex(null)
     if (c.status === 'ready') {
@@ -225,46 +237,118 @@ export default function Library(): React.JSX.Element {
             </div>
           ) : (
             <>
-              <div className="flex items-baseline justify-between mb-4">
+              <div className="flex items-baseline justify-between mb-3">
                 <h1 className="font-serif text-2xl">{active.name}</h1>
                 <div className="text-sm text-ink-400">{active.fileCount} documents indexed</div>
               </div>
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search the documents…"
-                className="w-full rounded-md bg-white/5 border border-white/15 focus:border-accent outline-none px-4 py-3 text-[15px]"
-              />
-              <div className="mt-3 text-sm text-ink-400">
-                {query.trim()
-                  ? `${results.length} result${results.length === 1 ? '' : 's'}`
-                  : `Showing all ${index?.docs.length ?? 0} document${(index?.docs.length ?? 0) === 1 ? '' : 's'}`}
+              {/* Tabs */}
+              <div className="flex gap-1 border-b border-white/10 mb-4 text-sm">
+                <button
+                  onClick={() => setView('docs')}
+                  className={`px-3 py-2 -mb-px border-b-2 ${view === 'docs' ? 'border-accent text-ink-50' : 'border-transparent text-ink-400 hover:text-ink-200'}`}
+                >
+                  Documents
+                </button>
+                <button
+                  onClick={() => setView('highlights')}
+                  className={`px-3 py-2 -mb-px border-b-2 ${view === 'highlights' ? 'border-accent text-ink-50' : 'border-transparent text-ink-400 hover:text-ink-200'}`}
+                >
+                  Highlights{index?.highlights.length ? ` (${index.highlights.length})` : ''}
+                </button>
               </div>
-              <div className="mt-2 space-y-2">
-                {(query.trim() ? results : (index?.docs ?? []).map((d) => ({ doc: d, score: 0, snippet: '' }))).map((h) => (
-                  <div key={h.doc.id} className="rounded-md border border-white/10 bg-white/[0.03] px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="font-medium text-[15px] truncate">{h.doc.subject || h.doc.name}</div>
-                      <div className="text-[11px] text-ink-400 shrink-0">
-                        {h.doc.kind === 'email' ? '✉︎ ' : ''}
-                        {h.doc.ext.replace('.', '').toUpperCase()} · {fmtBytes(h.doc.size)}
-                      </div>
-                    </div>
-                    {h.doc.from && (
-                      <div className="text-[12px] text-ink-400 truncate">
-                        {h.doc.from}
-                        {h.doc.date ? ` · ${h.doc.date}` : ''}
-                      </div>
-                    )}
-                    <div className="text-[12px] text-ink-400 truncate">{h.doc.path}</div>
-                    {h.snippet && <div className="mt-1 text-sm text-ink-200 leading-snug">{h.snippet}</div>}
+
+              {view === 'docs' ? (
+                <>
+                  <input
+                    ref={searchRef}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search the documents…"
+                    className="w-full rounded-md bg-white/5 border border-white/15 focus:border-accent outline-none px-4 py-3 text-[15px]"
+                  />
+                  <div className="mt-3 text-sm text-ink-400">
+                    {query.trim()
+                      ? `${results.length} result${results.length === 1 ? '' : 's'}`
+                      : `Showing all ${index?.docs.length ?? 0} document${(index?.docs.length ?? 0) === 1 ? '' : 's'}`}
                   </div>
-                ))}
-                {query.trim() && results.length === 0 && (
-                  <div className="text-sm text-ink-400 py-6 text-center">No matches.</div>
-                )}
-              </div>
+                  <div className="mt-2 space-y-2">
+                    {(query.trim() ? results : (index?.docs ?? []).map((d) => ({ doc: d, score: 0, snippet: '' }))).map((h) => (
+                      <div key={h.doc.id} className="rounded-md border border-white/10 bg-white/[0.03] px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-medium text-[15px] truncate">{h.doc.subject || h.doc.name}</div>
+                          <div className="text-[11px] text-ink-400 shrink-0">
+                            {h.doc.kind === 'email' ? '✉︎ ' : ''}
+                            {h.doc.ext.replace('.', '').toUpperCase()} · {fmtBytes(h.doc.size)}
+                          </div>
+                        </div>
+                        {h.doc.from && (
+                          <div className="text-[12px] text-ink-400 truncate">
+                            {h.doc.from}
+                            {h.doc.date ? ` · ${h.doc.date}` : ''}
+                          </div>
+                        )}
+                        <div className="text-[12px] text-ink-400 truncate">{h.doc.path}</div>
+                        {h.snippet && <div className="mt-1 text-sm text-ink-200 leading-snug">{h.snippet}</div>}
+                      </div>
+                    ))}
+                    {query.trim() && results.length === 0 && (
+                      <div className="text-sm text-ink-400 py-6 text-center">No matches.</div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-sm text-ink-400">
+                      {(index?.highlights.length ?? 0)} highlighted passage{(index?.highlights.length ?? 0) === 1 ? '' : 's'} across .docx / .pdf
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        disabled={!index?.highlights.length}
+                        onClick={() => exportCsv(highlightRows(), `${active.name}-highlights.csv`)}
+                        className="rounded-md border border-white/15 hover:bg-white/5 disabled:opacity-40 px-3 py-1.5 text-sm"
+                      >
+                        Export CSV
+                      </button>
+                      <button
+                        disabled={!index?.highlights.length}
+                        onClick={() => void exportXlsx(highlightRows(), `${active.name}-highlights.xlsx`, 'Highlights')}
+                        className="rounded-md border border-white/15 hover:bg-white/5 disabled:opacity-40 px-3 py-1.5 text-sm"
+                      >
+                        Export Excel
+                      </button>
+                    </div>
+                  </div>
+                  {!index?.highlights.length ? (
+                    <div className="text-sm text-ink-400 py-10 text-center">
+                      No reviewer highlights found in this set's .docx / .pdf files.
+                    </div>
+                  ) : (
+                    <div className="overflow-auto rounded-md border border-white/10">
+                      <table className="w-full text-sm">
+                        <thead className="bg-white/5 text-ink-300 text-left">
+                          <tr>
+                            <th className="px-3 py-2 font-medium">Document</th>
+                            <th className="px-3 py-2 font-medium">Pg</th>
+                            <th className="px-3 py-2 font-medium">Colour</th>
+                            <th className="px-3 py-2 font-medium">Highlighted text</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(index?.highlights ?? []).map((h, i) => (
+                            <tr key={i} className="border-t border-white/10 align-top">
+                              <td className="px-3 py-2 text-ink-300 whitespace-nowrap max-w-[180px] truncate" title={h.docName}>{h.docName}</td>
+                              <td className="px-3 py-2 text-ink-400">{h.page ?? ''}</td>
+                              <td className="px-3 py-2 text-ink-400 whitespace-nowrap">{h.color}</td>
+                              <td className="px-3 py-2 text-ink-100">{h.text}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
             </>
           )}
         </div>
