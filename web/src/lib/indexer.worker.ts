@@ -53,15 +53,20 @@ self.onmessage = async (e: MessageEvent<IndexRequest>) => {
         ...(extracted.meta || {})
       }
       docs.push(doc)
-      // Fold filename + email headers into the searchable text so name/subject hits rank too.
-      const searchText = [doc.name, doc.subject, doc.from, doc.to, extracted.text].filter(Boolean).join('\n')
-      addDoc(lexical, doc.id, searchText)
       // Reviewer highlights (.docx/.pdf) — pulled in the same pass.
+      const docHighlights: Highlight[] = []
       if (ext === '.docx' || ext === '.pdf') {
         for (const h of await extractHighlights(file, ext)) {
-          highlights.push({ docId: doc.id, docName: doc.name, ...h })
+          docHighlights.push({ docId: doc.id, docName: doc.name, ...h })
         }
+        highlights.push(...docHighlights)
       }
+      // Fold filename + email headers + highlighted passages into the searchable text so
+      // name/subject/highlight hits rank too (same composition as the desktop indexer).
+      const searchText = [doc.name, doc.subject, doc.from, doc.to, ...docHighlights.map((h) => h.text), extracted.text]
+        .filter(Boolean)
+        .join('\n')
+      addDoc(lexical, doc.id, searchText)
       done++
       if (done % 5 === 0 || done === total) {
         post({ type: 'progress', collectionId, phase: 'Reading documents', done, total, currentFile: file.name })

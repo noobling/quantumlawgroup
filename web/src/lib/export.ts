@@ -22,12 +22,17 @@ export function exportCsv(rows: Array<Record<string, unknown>>, filename: string
   downloadBlob(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }), filename)
 }
 
-export async function exportXlsx(rows: Array<Record<string, unknown>>, filename: string, sheet = 'Sheet1'): Promise<void> {
+/** XLSX file bytes (for zipping) without triggering a download. */
+export async function xlsxBytes(rows: Array<Record<string, unknown>>, sheet = 'Sheet1'): Promise<ArrayBuffer> {
   const XLSX = await import('xlsx')
   const ws = XLSX.utils.json_to_sheet(rows)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, sheet)
-  const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+  return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
+}
+
+export async function exportXlsx(rows: Array<Record<string, unknown>>, filename: string, sheet = 'Sheet1'): Promise<void> {
+  const buf = await xlsxBytes(rows, sheet)
   downloadBlob(
     new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
     filename

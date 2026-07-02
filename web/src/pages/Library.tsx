@@ -33,6 +33,8 @@ export default function Library(): React.JSX.Element {
   const [view, setView] = useState<'docs' | 'highlights' | 'produce'>('docs')
   const [batesPrefix, setBatesPrefix] = useState('QLG')
   const [batesStart, setBatesStart] = useState(1)
+  // Desktop-parity toggle: auto-exclude recurring logos/signatures + tiny (<3 KB) attachments.
+  const [excludeSignatures, setExcludeSignatures] = useState(true)
   const [producing, setProducing] = useState<{ done: number; total: number } | null>(null)
   const [prodResult, setProdResult] = useState<{ produced: number; excluded: number; begin: string; end: string } | null>(null)
   // Manual attachment review (Produce tab): scanned list + the set of keys the user has excluded.
@@ -199,7 +201,7 @@ export default function Library(): React.JSX.Element {
     setScanning({ done: 0, total: index.docs.filter((d) => d.kind === 'email').length })
     try {
       const { scanAttachments } = await import('../lib/production')
-      const list = await scanAttachments(index.docs, (id) => fileGetter(id)?.(), (done, total) => setScanning({ done, total }))
+      const list = await scanAttachments(index.docs, (id) => fileGetter(id)?.(), (done, total) => setScanning({ done, total }), excludeSignatures)
       setScanned(list)
       // Pre-exclude exactly what automatic exclusion would have dropped; the user adjusts from there.
       setExcludedKeys(new Set(list.filter((a) => a.autoReason).map((a) => a.key)))
@@ -208,6 +210,15 @@ export default function Library(): React.JSX.Element {
     } finally {
       setScanning(null)
     }
+  }
+
+  // Exclude this attachment and every copy of the same picture — exact (sha256) or
+  // perceptually similar (dHash), the web counterpart of the desktop "exclude similar".
+  async function excludeSimilar(a: import('../lib/production').ScannedAttachment): Promise<void> {
+    if (!scanned) return
+    const { similar } = await import('../lib/imageHash')
+    const keys = scanned.filter((o) => o.sha256 === a.sha256 || similar(a.dhash, o.dhash)).map((o) => o.key)
+    setExcludedKeys((prev) => new Set([...prev, ...keys]))
   }
 
   function toggleExcluded(key: string): void {
@@ -276,7 +287,8 @@ export default function Library(): React.JSX.Element {
     const cfg = { prefix: batesPrefix.trim() || 'DOC', start: Math.max(1, batesStart || 1), pad: 6, custodian: active?.name || '' }
     setProducing({ done: 0, total: index.docs.length })
     try {
-      const { produce, buildCsv, buildDat } = await import('../lib/production')
+      const { produce, buildCsv, buildDat, buildOpt, reviewIndexRows, groupExcluded } = await import('../lib/production')
+      const { xlsxBytes } = await import('../lib/export')
       // If the user ran a scan, honor their picks; otherwise fall back to automatic exclusion.
       let manualExclude: Map<string, string> | undefined
       if (scanned) {
@@ -285,16 +297,47 @@ export default function Library(): React.JSX.Element {
           if (excludedKeys.has(a.key)) manualExclude.set(a.key, a.autoReason || 'manually excluded')
         }
       }
-      const res = await produce(index.docs, (id) => fileGetter(id)?.(), cfg, (done, total) => setProducing({ done, total }), manualExclude)
+      const res = await produce(index.docs, (id) => fileGetter(id)?.(), cfg, (done, total) => setProducing({ done, total }), manualExclude, excludeSignatures)
       const JSZip = (await import('jszip')).default
       const zip = new JSZip()
+      // Same bundle shape as the desktop app: stamped PDFs (+ natives beside slip-sheets),
+      // Load Files/ (.dat/.csv/.opt), Reports/ (review index + highlights), Excluded/.
       const natives = zip.folder('NATIVES')!
-      for (const it of res.items) natives.file(it.pdfName, it.pdfBytes.slice())
-      zip.file('loadfile.csv', buildCsv(res))
-      zip.file('loadfile.dat', buildDat(res))
+      for (const it of res.items) {
+        natives.file(it.pdfName, it.pdfBytes.slice())
+        if (it.nativeName && it.nativeBytes) natives.file(it.nativeName, it.nativeBytes.slice())
+      }
+      const loadFiles = zip.folder('Load Files')!
+      loadFiles.file('Production Load File.csv', buildCsv(res))
+      loadFiles.file('Production Load File.dat', buildDat(res))
+      loadFiles.file('Production Load File.opt', buildOpt(res))
+      const reports = zip.folder('Reports')!
+      reports.file('Review Index.xlsx', await xlsxBytes(reviewIndexRows(res), 'Review Index'))
+      if (index.highlights.length) {
+        reports.file('Highlights.xlsx', await xlsxBytes(highlightRows(), 'Highlights'))
+      }
       if (res.excluded.length) {
+        // Excluded attachments folder: actual files, byte-identical copies collapsed, similar
+        // images clustered into Group NN folders (largest first) — plus a CSV listing.
+        const exFolder = zip.folder('Excluded')!
+        const groups = groupExcluded(res.excluded)
         const esc = (v: string): string => (/[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v)
-        zip.file('EXCLUDED.csv', ['Name,Reason,ParentBates', ...res.excluded.map((e) => [e.name, e.reason, e.parent].map(esc).join(','))].join('\r\n'))
+        const listing: string[] = ['Group,Filename,Size (bytes),Reason,Removed from']
+        for (const g of groups) {
+          const dir = groups.length > 1 || g.items.length > 1 ? exFolder.folder(`Group ${String(g.group).padStart(2, '0')}`)! : exFolder
+          const written = new Set<string>()   // one file per unique content hash
+          const usedNames = new Set<string>()
+          for (const e of g.items) {
+            listing.push([String(g.group), e.name, String(e.size), e.reason, e.parent].map(esc).join(','))
+            if (written.has(e.sha256)) continue
+            written.add(e.sha256)
+            let n = e.name
+            for (let k = 2; usedNames.has(n.toLowerCase()); k++) n = e.name.replace(/(\.[^.]*)?$/, ` (${k})$1`)
+            usedNames.add(n.toLowerCase())
+            dir.file(n, e.bytes.slice())
+          }
+        }
+        exFolder.file('Excluded Attachments.csv', listing.join('\r\n'))
       }
       const blob = await zip.generateAsync({ type: 'blob' })
       downloadBlob(blob, `${active?.name || 'production'}-bates.zip`)
@@ -547,11 +590,13 @@ export default function Library(): React.JSX.Element {
               ) : (
                 <div className="max-w-3xl space-y-4">
                   <p className="text-sm text-ink-300 leading-relaxed">
-                    Generate a Bates-stamped production: PDFs are stamped, emails are rendered to PDF
-                    with their attachments as families, and Concordance <code>.DAT</code> /{' '}
-                    <code>.CSV</code> load files are included — packaged as a ZIP. Office files
-                    (.docx/.xlsx/.pptx) become Bates slip-sheets. <strong>Scan attachments</strong> to
-                    review and choose which email attachments to include or exclude before producing.
+                    Generate a Bates-stamped production ZIP: PDFs are stamped, emails are rendered to PDF
+                    with their attachments as families, plus Concordance <code>.DAT</code> / <code>.CSV</code> /{' '}
+                    Opticon <code>.OPT</code> load files, an internal review index and a highlights table
+                    (Excel), and an <code>Excluded/</code> folder with anything dropped. Office files
+                    (.docx/.xlsx/.pptx) become Bates slip-sheets with the native file included beside them.{' '}
+                    <strong>Scan attachments</strong> to review and choose which email attachments to include
+                    or exclude before producing.
                   </p>
                   {filesRef.current.collectionId !== activeId && (
                     <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[13px] text-amber-200">
@@ -577,6 +622,21 @@ export default function Library(): React.JSX.Element {
                       />
                     </label>
                   </div>
+                  <label className="flex items-start gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={excludeSignatures}
+                      onChange={(e) => setExcludeSignatures(e.target.checked)}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span className="text-ink-300">
+                      Skip logos, signatures &amp; tiny attachments
+                      <span className="block text-[12px] text-ink-500">
+                        Auto-excludes images repeated across 3+ conversations (exact or visually similar) and files under 3 KB.
+                        Exact duplicates are always excluded. Scan attachments to review before producing.
+                      </span>
+                    </span>
+                  </label>
 
                   {/* Step 1 — manual attachment review */}
                   <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3">
@@ -633,6 +693,16 @@ export default function Library(): React.JSX.Element {
                                 </button>
                                 {a.autoReason && (
                                   <span className="shrink-0 rounded-full bg-amber-500/15 text-amber-200 text-[10px] px-2 py-0.5">{a.autoReason}</span>
+                                )}
+                                {a.isImage && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void excludeSimilar(a)}
+                                    title="Exclude this image and all visually similar copies (re-encoded logos, signatures)"
+                                    className="shrink-0 text-[11px] text-ink-300 hover:text-red-300 border border-white/10 rounded px-2 py-0.5"
+                                  >
+                                    ✕ similar
+                                  </button>
                                 )}
                                 <button type="button" onClick={() => void openPreview(a)} className="shrink-0 text-[11px] text-ink-300 hover:text-accent border border-white/10 rounded px-2 py-0.5">Preview</button>
                                 <span className={`shrink-0 text-[11px] w-12 text-right ${included ? 'text-green-300' : 'text-ink-500'}`}>{included ? 'Include' : 'Exclude'}</span>
